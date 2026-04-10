@@ -1,12 +1,8 @@
 import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
+import type { ToolHandler } from './auth.js';
 import { createHandoff, readHandoff } from '../../db/queries/handoff.js';
-import { formatError } from '../../lib/errors.js';
-
-type ToolHandler = (args: Record<string, unknown>) => {
-  content: Array<{ type: string; text: string }>;
-  isError?: boolean;
-};
+import { formatError, xmlEscape } from '../../lib/errors.js';
 
 export function registerHandoffTools(
   handlers: Record<string, ToolHandler>,
@@ -40,7 +36,7 @@ export function registerHandoffTools(
     return {
       content: [{
         type: 'text',
-        text: `<result><handoff target_key="${targetKey}">created</handoff></result>`,
+        text: `<result><handoff target_key="${xmlEscape(targetKey)}">created</handoff></result>`,
       }],
     };
   };
@@ -62,7 +58,7 @@ export function registerHandoffTools(
     return {
       content: [{
         type: 'text',
-        text: `<result><handoff>${content}</handoff></result>`,
+        text: `<result><handoff>${xmlEscape(content)}</handoff></result>`,
       }],
     };
   };

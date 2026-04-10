@@ -3,7 +3,7 @@ import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
 import { writeMemory, retireMemory, readMemoryHistory } from '../../db/queries/memory.js';
 import { addTags } from '../../db/queries/tags.js';
-import { formatError } from '../../lib/errors.js';
+import { formatError, xmlEscape, validateContentSize } from '../../lib/errors.js';
 import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
 
 export function registerMemoryTools(
@@ -42,6 +42,11 @@ export function registerMemoryTools(
       };
     }
 
+    const sizeError = validateContentSize(value, 'value');
+    if (sizeError) {
+      return { content: [{ type: 'text', text: sizeError }], isError: true };
+    }
+
     const result = writeMemory(db, {
       entryId,
       key,
@@ -71,17 +76,17 @@ export function registerMemoryTools(
     if (tags && tags.length > 0) {
       const tagResult = addTags(db, { entryId, tags });
       if (tagResult.addedTags.length > 0) {
-        tagXml = `<tags>${tagResult.addedTags.map((t) => `<tag>${t}</tag>`).join('')}</tags>`;
+        tagXml = `<tags>${tagResult.addedTags.map((t) => `<tag>${xmlEscape(t)}</tag>`).join('')}</tags>`;
       }
       if (tagResult.similar.length > 0) {
-        tagXml += `<tags_similar>${tagResult.similar.map((s) => `${s.existing} (similar to ${s.submitted})`).join(', ')}</tags_similar>`;
+        tagXml += `<tags_similar>${tagResult.similar.map((s) => `${xmlEscape(s.existing)} (similar to ${xmlEscape(s.submitted)})`).join(', ')}</tags_similar>`;
       }
     }
 
     return {
       content: [{
         type: 'text',
-        text: `<result><memory_entry id="${result.id}" version_id="${result.versionId}" key="${key}" created="${result.created}"/>${tagXml}</result>`,
+        text: `<result><memory_entry id="${result.id}" version_id="${result.versionId}" key="${xmlEscape(key)}" created="${result.created}"/>${tagXml}</result>`,
       }],
     };
   };
@@ -109,7 +114,7 @@ export function registerMemoryTools(
     return {
       content: [{
         type: 'text',
-        text: `<result><retired id="${memoryEntryId}" entry_id="${entryId}"/></result>`,
+        text: `<result><retired id="${xmlEscape(memoryEntryId)}" entry_id="${xmlEscape(entryId)}"/></result>`,
       }],
     };
   };
@@ -138,21 +143,21 @@ export function registerMemoryTools(
       return {
         content: [{
           type: 'text',
-          text: `<result><history key="${key}" count="0"/></result>`,
+          text: `<result><history key="${xmlEscape(key)}" count="0"/></result>`,
         }],
       };
     }
 
     const versionsXml = history
       .map(
-        (v) => `<version version_id="${v.versionId}" changed_at="${v.changedAt}"><value>${v.value}</value></version>`,
+        (v) => `<version version_id="${v.versionId}" changed_at="${v.changedAt}"><value>${xmlEscape(v.value)}</value></version>`,
       )
       .join('');
 
     return {
       content: [{
         type: 'text',
-        text: `<result><history key="${key}" count="${history.length}">${versionsXml}</history></result>`,
+        text: `<result><history key="${xmlEscape(key)}" count="${history.length}">${versionsXml}</history></result>`,
       }],
     };
   };

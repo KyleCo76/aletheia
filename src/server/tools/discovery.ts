@@ -5,7 +5,7 @@ import { searchJournal, readJournalEntries } from '../../db/queries/journal.js';
 import { searchMemory, readMemory } from '../../db/queries/memory.js';
 import { listTags, getRelatedEntries } from '../../db/queries/tags.js';
 import { readHandoff } from '../../db/queries/handoff.js';
-import { formatError } from '../../lib/errors.js';
+import { formatError, xmlEscape } from '../../lib/errors.js';
 
 export function registerDiscoveryTools(
   handlers: Record<string, ToolHandler>,
@@ -26,7 +26,7 @@ export function registerDiscoveryTools(
       if (journalResults.length > 0) {
         xml += '<journal_entries>';
         for (const j of journalResults) {
-          xml += `<entry id="${j.id}" entry_id="${j.entryId}" created_at="${j.createdAt}" digested="${j.digestedAt !== null}"><content>${j.content}</content></entry>`;
+          xml += `<entry id="${j.id}" entry_id="${j.entryId}" created_at="${j.createdAt}" digested="${j.digestedAt !== null}"><content>${xmlEscape(j.content)}</content></entry>`;
         }
         xml += '</journal_entries>';
       }
@@ -37,7 +37,7 @@ export function registerDiscoveryTools(
       if (memoryResults.length > 0) {
         xml += '<memory_entries>';
         for (const m of memoryResults) {
-          xml += `<entry id="${m.id}" key="${m.key}" version_id="${m.versionId}" updated_at="${m.updatedAt}"><value>${m.value}</value></entry>`;
+          xml += `<entry id="${m.id}" key="${xmlEscape(m.key)}" version_id="${m.versionId}" updated_at="${m.updatedAt}"><value>${xmlEscape(m.value)}</value></entry>`;
         }
         xml += '</memory_entries>';
       }
@@ -73,7 +73,7 @@ export function registerDiscoveryTools(
         return {
           content: [{
             type: 'text',
-            text: `<result><handoff target_key="${entryId}" consumed="true"><content>${handoffContent}</content></handoff></result>`,
+            text: `<result><handoff target_key="${xmlEscape(entryId)}" consumed="true"><content>${xmlEscape(handoffContent)}</content></handoff></result>`,
           }],
         };
       }
@@ -93,29 +93,29 @@ export function registerDiscoveryTools(
         limit,
       });
 
-      xml += `<journal entry_id="${entryId}" count="${entries.length}">`;
+      xml += `<journal entry_id="${xmlEscape(entryId)}" count="${entries.length}">`;
       for (const e of entries) {
         xml += `<entry id="${e.id}" created_at="${e.createdAt}" digested="${e.digestedAt !== null}">`;
         if (e.subSection) {
-          xml += `<sub_section>${e.subSection}</sub_section>`;
+          xml += `<sub_section>${xmlEscape(e.subSection)}</sub_section>`;
         }
-        xml += `<content>${e.content}</content></entry>`;
+        xml += `<content>${xmlEscape(e.content)}</content></entry>`;
       }
       xml += '</journal>';
     } else if (entryRow.entry_class === 'memory') {
       const memories = readMemory(db, { entryId });
 
-      xml += `<memory entry_id="${entryId}" count="${memories.length}">`;
+      xml += `<memory entry_id="${xmlEscape(entryId)}" count="${memories.length}">`;
       for (const m of memories) {
-        xml += `<entry id="${m.id}" key="${m.key}" version_id="${m.versionId}" updated_at="${m.updatedAt}"><value>${m.value}</value></entry>`;
+        xml += `<entry id="${m.id}" key="${xmlEscape(m.key)}" version_id="${m.versionId}" updated_at="${m.updatedAt}"><value>${xmlEscape(m.value)}</value></entry>`;
       }
       xml += '</memory>';
     } else if (entryRow.entry_class === 'handoff') {
       const handoffContent = readHandoff(db, { targetKey: entryId });
       if (handoffContent !== null) {
-        xml += `<handoff target_key="${entryId}" consumed="true"><content>${handoffContent}</content></handoff>`;
+        xml += `<handoff target_key="${xmlEscape(entryId)}" consumed="true"><content>${xmlEscape(handoffContent)}</content></handoff>`;
       } else {
-        xml += `<handoff target_key="${entryId}" consumed="false"/>`;
+        xml += `<handoff target_key="${xmlEscape(entryId)}" consumed="false"/>`;
       }
     }
 
@@ -123,7 +123,7 @@ export function registerDiscoveryTools(
     if (showRelated !== false) {
       const related = getRelatedEntries(db, { entryId });
       if (related.length > 0) {
-        xml += `<related>${related.map((r) => `<entry id="${r.entryId}" shared_tags="${r.sharedTags}"/>`).join('')}</related>`;
+        xml += `<related>${related.map((r) => `<entry id="${xmlEscape(r.entryId)}" shared_tags="${r.sharedTags}"/>`).join('')}</related>`;
       }
     }
 
@@ -152,7 +152,8 @@ export function registerDiscoveryTools(
         const tagIdsForClass = db.prepare(
           `SELECT DISTINCT t.name FROM tags t
            JOIN entry_tags et ON t.id = et.tag_id
-           WHERE et.entry_id IN (${placeholders})`,
+           WHERE et.entry_id IN (${placeholders})
+           ORDER BY t.name`,
         ).all(...entryIdSet) as Array<{ name: string }>;
 
         const classTagNames = new Set(tagIdsForClass.map((r) => r.name));
@@ -163,7 +164,7 @@ export function registerDiscoveryTools(
     }
 
     const tagsXml = filteredTags
-      .map((t) => `<tag name="${t.name}" count="${t.count}"/>`)
+      .map((t) => `<tag name="${xmlEscape(t.name)}" count="${t.count}"/>`)
       .join('');
 
     return {

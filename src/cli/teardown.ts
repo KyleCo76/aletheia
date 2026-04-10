@@ -27,9 +27,11 @@ function removeHooks(settings: Record<string, unknown>): void {
 
   if (Array.isArray(hooks.PreToolUse)) {
     const before = hooks.PreToolUse.length;
-    hooks.PreToolUse = (hooks.PreToolUse as Array<{ command?: string }>).filter(
-      h => !h.command || !h.command.includes('aletheia'),
-    );
+    hooks.PreToolUse = (hooks.PreToolUse as Array<Record<string, unknown>>).filter(h => {
+      const innerHooks = h.hooks as Array<{ command?: string }> | undefined;
+      if (!innerHooks) return true;
+      return !innerHooks.some(ih => ih.command && ih.command.includes('aletheia'));
+    });
     const removed = before - (hooks.PreToolUse as unknown[]).length;
     if (removed > 0) {
       console.error(`[aletheia] Removed ${removed} hook registration(s).`);

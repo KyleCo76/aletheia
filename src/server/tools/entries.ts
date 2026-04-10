@@ -2,10 +2,10 @@ import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
 import { addTags } from '../../db/queries/tags.js';
-import { formatError } from '../../lib/errors.js';
+import { formatError, xmlEscape } from '../../lib/errors.js';
 import crypto from 'crypto';
 
-const VALID_ENTRY_CLASSES = ['journal', 'memory', 'handoff'] as const;
+const VALID_ENTRY_CLASSES = ['journal', 'memory', 'handoff', 'status'] as const;
 
 function requireClaim(
   sessionState: Map<string, unknown>,
@@ -37,7 +37,7 @@ export function registerEntryTools(
 
     if (!entryClass || !VALID_ENTRY_CLASSES.includes(entryClass as typeof VALID_ENTRY_CLASSES[number])) {
       return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_class must be one of: journal, memory, handoff') }],
+        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_class must be one of: journal, memory, handoff, status') }],
         isError: true,
       };
     }
@@ -87,12 +87,12 @@ export function registerEntryTools(
     let responseXml = `<result><entry_id>${entryId}</entry_id><entry_class>${entryClass}</entry_class><project>${projectNamespace}</project>`;
 
     if (tagResult) {
-      const addedXml = tagResult.addedTags.map((t) => `<tag>${t}</tag>`).join('');
+      const addedXml = tagResult.addedTags.map((t) => `<tag>${xmlEscape(t)}</tag>`).join('');
       responseXml += `<added_tags>${addedXml}</added_tags>`;
 
       if (tagResult.similar.length > 0) {
         const similarXml = tagResult.similar
-          .map((s) => `<similar><submitted>${s.submitted}</submitted><existing>${s.existing}</existing></similar>`)
+          .map((s) => `<similar><submitted>${xmlEscape(s.submitted)}</submitted><existing>${xmlEscape(s.existing)}</existing></similar>`)
           .join('');
         responseXml += `<similar_tags>${similarXml}</similar_tags>`;
       }
@@ -121,7 +121,7 @@ export function registerEntryTools(
     if (entryClass) {
       if (!VALID_ENTRY_CLASSES.includes(entryClass as typeof VALID_ENTRY_CLASSES[number])) {
         return {
-          content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_class must be one of: journal, memory, handoff') }],
+          content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_class must be one of: journal, memory, handoff, status') }],
           isError: true,
         };
       }
@@ -186,7 +186,7 @@ export function registerEntryTools(
     const entriesXml = rows
       .map(
         (r) =>
-          `<entry><id>${r.id}</id><entry_class>${r.entry_class}</entry_class><project>${r.project_namespace ?? ''}</project><created_at>${r.created_at}</created_at></entry>`,
+          `<entry><id>${r.id}</id><entry_class>${r.entry_class}</entry_class><project>${xmlEscape(r.project_namespace ?? '')}</project><created_at>${r.created_at}</created_at></entry>`,
       )
       .join('');
 

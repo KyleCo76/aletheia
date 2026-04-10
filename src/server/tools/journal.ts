@@ -3,7 +3,7 @@ import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
 import { appendJournalEntry } from '../../db/queries/journal.js';
 import { addTags, getRelatedEntries } from '../../db/queries/tags.js';
-import { formatError } from '../../lib/errors.js';
+import { formatError, xmlEscape, validateContentSize } from '../../lib/errors.js';
 import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
 import crypto from 'crypto';
 
@@ -36,6 +36,11 @@ export function registerJournalTools(
         content: [{ type: 'text', text: formatError('MISSING_FIELD', 'content is required') }],
         isError: true,
       };
+    }
+
+    const sizeError = validateContentSize(content);
+    if (sizeError) {
+      return { content: [{ type: 'text', text: sizeError }], isError: true };
     }
 
     if (critical) {
@@ -87,11 +92,8 @@ export function registerJournalTools(
           `UPDATE journal_entries SET digested_at = datetime('now') WHERE id = ?`,
         ).run(journalId);
 
-        // Process tags
-        let tagResult: { addedTags: string[]; similar: Array<{ submitted: string; existing: string }> } | undefined;
+        // Process tags inline (already in a transaction)
         if (tags && tags.length > 0) {
-          // Tags use their own transaction internally, but we're already in one,
-          // so we do tag ops inline
           for (const tag of tags) {
             db.prepare(`INSERT OR IGNORE INTO tags (name) VALUES (?)`).run(tag);
             const tagRow = db.prepare(`SELECT id FROM tags WHERE name = ?`).get(tag) as { id: number };
@@ -99,7 +101,7 @@ export function registerJournalTools(
           }
         }
 
-        return { journalId, memoryId, versionId, createdAt: journalRow.created_at, tagResult };
+        return { journalId, memoryId, versionId, createdAt: journalRow.created_at };
       }).immediate();
 
       // Increment circuit breakers after successful write
@@ -110,14 +112,14 @@ export function registerJournalTools(
       xml += `<memory_entry id="${result.memoryId}" version_id="${result.versionId}"/>`;
 
       if (tags && tags.length > 0) {
-        xml += `<tags>${tags.map((t) => `<tag>${t}</tag>`).join('')}</tags>`;
+        xml += `<tags>${tags.map((t) => `<tag>${xmlEscape(t)}</tag>`).join('')}</tags>`;
       }
 
       // Related entries
       if (!skipRelated) {
         const related = getRelatedEntries(db, { entryId });
         if (related.length > 0) {
-          xml += `<related>${related.map((r) => `<entry id="${r.entryId}" shared_tags="${r.sharedTags}"/>`).join('')}</related>`;
+          xml += `<related>${related.map((r) => `<entry id="${xmlEscape(r.entryId)}" shared_tags="${r.sharedTags}"/>`).join('')}</related>`;
         }
       }
 
@@ -139,10 +141,10 @@ export function registerJournalTools(
 
     if (tagResult) {
       if (tagResult.addedTags.length > 0) {
-        xml += `<tags>${tagResult.addedTags.map((t) => `<tag>${t}</tag>`).join('')}</tags>`;
+        xml += `<tags>${tagResult.addedTags.map((t) => `<tag>${xmlEscape(t)}</tag>`).join('')}</tags>`;
       }
       if (tagResult.similar.length > 0) {
-        xml += `<tags_similar>${tagResult.similar.map((s) => `${s.existing} (similar to ${s.submitted})`).join(', ')}</tags_similar>`;
+        xml += `<tags_similar>${tagResult.similar.map((s) => `${xmlEscape(s.existing)} (similar to ${xmlEscape(s.submitted)})`).join(', ')}</tags_similar>`;
       }
     }
 
@@ -150,7 +152,7 @@ export function registerJournalTools(
     if (!skipRelated) {
       const related = getRelatedEntries(db, { entryId });
       if (related.length > 0) {
-        xml += `<related>${related.map((r) => `<entry id="${r.entryId}" shared_tags="${r.sharedTags}"/>`).join('')}</related>`;
+        xml += `<related>${related.map((r) => `<entry id="${xmlEscape(r.entryId)}" shared_tags="${r.sharedTags}"/>`).join('')}</related>`;
       }
     }
 
@@ -265,7 +267,7 @@ export function registerJournalTools(
     return {
       content: [{
         type: 'text',
-        text: `<result><memory_entry id="${promoteResult.memoryId}" version_id="${promoteResult.versionId}" key="${key}" created="${promoteResult.created}"/><journal_entry id="${journalId}" digested="true"/></result>`,
+        text: `<result><memory_entry id="${promoteResult.memoryId}" version_id="${promoteResult.versionId}" key="${xmlEscape(key)}" created="${promoteResult.created}"/><journal_entry id="${xmlEscape(journalId)}" digested="true"/></result>`,
       }],
     };
   };

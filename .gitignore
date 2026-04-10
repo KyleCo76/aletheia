@@ -4,9 +4,21 @@ hooks/
 *.db
 *.db-wal
 *.db-shm
+
+# Session / agent state
 .claude/
 .remember/
 pm-status.json
 activity-log/
+
+# Internal planning and review docs (not for public repo)
 aletheia-code-review.md
 aletheia-coverage-check.md
+aletheia-*-journal.md
+aletheia-review.md
+aletheia-plan.md
+2026-04-08-aletheia-design.md
+pm-instructions.md
+review-findings.md
+CLAUDE.md
+*.pre-aletheia

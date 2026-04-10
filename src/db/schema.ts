@@ -139,7 +139,36 @@ function runMigration2(db: Database.Database): void {
   setSchemaVersion(db, 2);
 }
 
-const migrations: Array<(db: Database.Database) => void> = [runMigration1, runMigration2];
+function runMigration3(db: Database.Database): void {
+  // Add 'status' to the entries.entry_class CHECK constraint.
+  // SQLite doesn't support ALTER CHECK, so recreate the table.
+  // Must drop dependent view first, then recreate after.
+  db.exec(`
+    DROP VIEW IF EXISTS active_tags;
+
+    CREATE TABLE entries_new (
+      id TEXT PRIMARY KEY,
+      entry_class TEXT NOT NULL CHECK(entry_class IN ('journal', 'memory', 'handoff', 'status')),
+      project_namespace TEXT,
+      created_by_key TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    INSERT INTO entries_new SELECT * FROM entries;
+    DROP TABLE entries;
+    ALTER TABLE entries_new RENAME TO entries;
+
+    CREATE VIEW active_tags AS
+      SELECT DISTINCT t.id, t.name
+      FROM tags t
+      JOIN entry_tags et ON t.id = et.tag_id
+      JOIN entries e ON et.entry_id = e.id
+      LEFT JOIN memory_entries me ON e.id = me.entry_id
+      WHERE e.entry_class != 'memory' OR me.archived_at IS NULL;
+  `);
+  setSchemaVersion(db, 3);
+}
+
+const migrations: Array<(db: Database.Database) => void> = [runMigration1, runMigration2, runMigration3];
 
 export function runMigrations(db: Database.Database): void {
   const currentVersion = getSchemaVersion(db);

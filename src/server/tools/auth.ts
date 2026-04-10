@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
 import { validateKey, createKey, modifyKey, listKeys } from '../../db/queries/keys.js';
-import { formatError } from '../../lib/errors.js';
+import { formatError, xmlEscape } from '../../lib/errors.js';
 import { KEYS_DIR } from '../../lib/constants.js';
 import fs from 'fs';
 import path from 'path';
@@ -60,7 +60,7 @@ export function registerAuthTools(
     return {
       content: [{
         type: 'text',
-        text: `<result><id>${result.id}</id><permissions>${result.permissions}</permissions><entry_scope>${result.entryScope ?? ''}</entry_scope></result>`,
+        text: `<result><id>${result.id}</id><permissions>${result.permissions}</permissions><entry_scope>${xmlEscape(result.entryScope ?? '')}</entry_scope></result>`,
       }],
     };
   };
@@ -79,7 +79,7 @@ export function registerAuthTools(
     return {
       content: [{
         type: 'text',
-        text: `<result><status>claimed</status><id>${claimed.id}</id><permissions>${claimed.permissions}</permissions><entry_scope>${claimed.entryScope ?? ''}</entry_scope></result>`,
+        text: `<result><status>claimed</status><id>${claimed.id}</id><permissions>${claimed.permissions}</permissions><entry_scope>${xmlEscape(claimed.entryScope ?? '')}</entry_scope></result>`,
       }],
     };
   };
@@ -95,8 +95,24 @@ export function registerAuthTools(
       };
     }
 
+    // Validate project name to prevent path traversal
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+      return {
+        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'name must contain only letters, numbers, hyphens, and underscores') }],
+        isError: true,
+      };
+    }
+
     // Check if master key file already exists for this project name
     const keyFilePath = path.join(KEYS_DIR, `${name}.key`);
+
+    // Verify resolved path is under KEYS_DIR (defense in depth)
+    if (!path.resolve(keyFilePath).startsWith(path.resolve(KEYS_DIR))) {
+      return {
+        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'Invalid project name') }],
+        isError: true,
+      };
+    }
     if (fs.existsSync(keyFilePath)) {
       return {
         content: [{ type: 'text', text: formatError('ALREADY_BOOTSTRAPPED', `Project "${name}" has already been bootstrapped`) }],
@@ -104,7 +120,9 @@ export function registerAuthTools(
       };
     }
 
-    // Create master key
+    // Create master key in DB first, then write to filesystem.
+    // Note: if writeFileSync fails after DB insert, the key exists in DB but
+    // has no file. Recovery: manually delete the key from DB and retry bootstrap.
     const keyResult = createKey(db, {
       permissions: 'maintenance',
       entryScope: name,
@@ -133,7 +151,7 @@ export function registerAuthTools(
     return {
       content: [{
         type: 'text',
-        text: `<result><key>${keyResult.keyValue}</key><key_id>${keyResult.id}</key_id><permissions>${keyResult.permissions}</permissions><key_file>${keyFilePath}</key_file><project>${name}</project></result>`,
+        text: `<result><key>${keyResult.keyValue}</key><key_id>${keyResult.id}</key_id><permissions>${keyResult.permissions}</permissions><key_file>${xmlEscape(keyFilePath)}</key_file><project>${xmlEscape(name)}</project></result>`,
       }],
     };
   };
@@ -190,6 +208,14 @@ export function registerAuthTools(
       };
     }
 
+    const validPermissions = ['read-only', 'read-write', 'create-sub-entries', 'maintenance'];
+    if (!validPermissions.includes(permissions)) {
+      return {
+        content: [{ type: 'text', text: formatError('INVALID_INPUT', `permissions must be one of: ${validPermissions.join(', ')}`) }],
+        isError: true,
+      };
+    }
+
     if (settings.permissions.enforce) {
       const claimed = requireClaim(sessionState, settings);
       if (!claimed) return claimError();
@@ -199,7 +225,7 @@ export function registerAuthTools(
       | { id: string; permissions: string; entryScope: string | null }
       | undefined;
 
-    const callerPermissions = claimed?.permissions ?? 'maintenance';
+    const callerPermissions = claimed?.permissions ?? 'read-only';
 
     const result = modifyKey(db, { keyId, permissions, callerPermissions });
 
@@ -233,7 +259,7 @@ export function registerAuthTools(
     const keyXml = keys
       .map(
         (k) =>
-          `<key><id>${k.id}</id><permissions>${k.permissions}</permissions><entry_scope>${k.entryScope ?? ''}</entry_scope><created_at>${k.createdAt}</created_at></key>`,
+          `<key><id>${k.id}</id><permissions>${k.permissions}</permissions><entry_scope>${xmlEscape(k.entryScope ?? '')}</entry_scope><created_at>${k.createdAt}</created_at></key>`,
       )
       .join('');
 

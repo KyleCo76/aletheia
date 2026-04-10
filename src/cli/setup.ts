@@ -14,6 +14,9 @@ import {
 } from '../lib/constants.js';
 import { isWindows } from '../lib/platform.js';
 import { readClaudeSettings, writeClaudeSettings } from './utils.js';
+import { createConnection } from '../db/connection.js';
+import { runMigrations } from '../db/schema.js';
+import { createKey } from '../db/queries/keys.js';
 
 function getDistDir(): string {
   const thisFile = fileURLToPath(import.meta.url);
@@ -50,7 +53,7 @@ function generateSettingsToml(): void {
 enforce = false
 
 [injection]
-# Hook trigger: PreToolUse or UserPromptSubmit
+# Hook trigger (currently only PreToolUse is supported)
 trigger = "PreToolUse"
 # L1 injection interval (every N tool calls)
 l1_interval = ${DEFAULTS.l1Interval}
@@ -118,12 +121,13 @@ function registerHooks(settings: Record<string, unknown>): void {
     return `${runner} ${path.join(hooksDir, subdir, name + ext)}`;
   }
 
-  // Build Aletheia hook entries
-  const aletheiaHooks: Array<{ matcher: string; command: string }> = [
-    { matcher: '', command: hookCommand('startup') },
-    { matcher: '', command: hookCommand('l1-inject') },
-    { matcher: '', command: hookCommand('l2-inject') },
-    { matcher: 'Write|Edit', command: hookCommand('memory-intercept') },
+  // Build Aletheia hook entries in Claude Code's required format:
+  // { matcher, hooks: [{ type: "command", command: "..." }] }
+  const aletheiaHooks = [
+    { matcher: '', hooks: [{ type: 'command', command: hookCommand('startup') }] },
+    { matcher: '', hooks: [{ type: 'command', command: hookCommand('l1-inject') }] },
+    { matcher: '', hooks: [{ type: 'command', command: hookCommand('l2-inject') }] },
+    { matcher: 'Write|Edit', hooks: [{ type: 'command', command: hookCommand('memory-intercept') }] },
   ];
 
   if (!settings.hooks || typeof settings.hooks !== 'object') {
@@ -134,18 +138,43 @@ function registerHooks(settings: Record<string, unknown>): void {
   if (!Array.isArray(hooks.PreToolUse)) {
     hooks.PreToolUse = [];
   }
-  const existing = hooks.PreToolUse as Array<{ matcher?: string; command?: string }>;
+  const existing = hooks.PreToolUse as Array<Record<string, unknown>>;
 
   // Remove any previously registered Aletheia hooks
-  const filtered = existing.filter(
-    h => !h.command || !h.command.includes('aletheia'),
-  );
+  const filtered = existing.filter(h => {
+    const innerHooks = h.hooks as Array<{ command?: string }> | undefined;
+    if (!innerHooks) return true;
+    return !innerHooks.some(ih => ih.command && ih.command.includes('aletheia'));
+  });
 
   // Append new Aletheia hooks
   filtered.push(...aletheiaHooks);
   hooks.PreToolUse = filtered;
 
+  // Note: Stop hook (5th hook for session cleanup) deferred to v0.2.0
   console.error(`[aletheia] Registered ${aletheiaHooks.length} hooks (${subdir})`);
+}
+
+function installTemplates(): void {
+  const distDir = getDistDir();
+  const packageRoot = path.resolve(distDir, '..');
+  const srcTemplates = path.join(packageRoot, 'src', 'templates');
+
+  if (!fs.existsSync(srcTemplates)) {
+    console.error('[aletheia] Template source not found, skipping template install.');
+    return;
+  }
+
+  const files = fs.readdirSync(srcTemplates).filter(f => f.endsWith('.md'));
+  let copied = 0;
+  for (const file of files) {
+    const dest = path.join(TEMPLATES_DIR, file);
+    if (!fs.existsSync(dest)) {
+      fs.copyFileSync(path.join(srcTemplates, file), dest);
+      copied++;
+    }
+  }
+  console.error(`[aletheia] Installed ${copied} templates to ${TEMPLATES_DIR}`);
 }
 
 function generateMaintenanceKey(): void {
@@ -155,8 +184,14 @@ function generateMaintenanceKey(): void {
     return;
   }
 
-  const key = crypto.randomBytes(32).toString('hex');
-  fs.writeFileSync(keyPath, key + '\n', { encoding: 'utf-8', mode: 0o600 });
+  // Initialize DB and insert the key so it can be claimed
+  const db = createConnection();
+  runMigrations(db);
+
+  const result = createKey(db, { permissions: 'maintenance' });
+  db.close();
+
+  fs.writeFileSync(keyPath, result.keyValue + '\n', { encoding: 'utf-8', mode: 0o600 });
   console.error(`[aletheia] Generated maintenance key: ${keyPath}`);
 }
 
@@ -175,7 +210,8 @@ export async function setup(): Promise<void> {
   registerHooks(settings);
   writeClaudeSettings(settings);
 
-  // 5. Templates directory already created in step 1
+  // 5. Copy templates to user directory
+  installTemplates();
 
   // 6. Generate maintenance key if permissions enforcement is on
   //    Default is off, but generate it anyway for future use

@@ -118,7 +118,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'write_memory',
-    description: 'Write a memory entry (key-value with OCC versioning)',
+    description: 'Write a memory entry (key-value). OCC versioning active only when permissions are enforced; in single-agent mode version_id is ignored.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -319,7 +319,9 @@ export async function main(): Promise<void> {
   const frequencyManager = new FrequencyManager(settings);
   await startSocketServer(db, settings, sessionState, frequencyManager);
 
-  // Set ALETHEIA_SOCK so hooks can discover the socket path
+  // Set ALETHEIA_SOCK for in-process use (e.g., spawned child processes).
+  // Note: hooks discover the socket via ~/.aletheia/sockets/current file,
+  // not this env var, because hooks are Claude Code children, not MCP children.
   process.env.ALETHEIA_SOCK = getSocketServerPath();
 
   // 8. Connect StdioServerTransport (this blocks — must be last)

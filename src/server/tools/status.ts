@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
+import type { ToolHandler } from './auth.js';
 import {
   readStatus,
   replaceStatus,
@@ -7,13 +8,8 @@ import {
   addSection,
   removeSection,
 } from '../../db/queries/status.js';
-import { formatError } from '../../lib/errors.js';
+import { formatError, xmlEscape, validateContentSize } from '../../lib/errors.js';
 import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
-
-type ToolHandler = (args: Record<string, unknown>) => {
-  content: Array<{ type: string; text: string }>;
-  isError?: boolean;
-};
 
 export function registerStatusTools(
   handlers: Record<string, ToolHandler>,
@@ -43,14 +39,14 @@ export function registerStatusTools(
     const sectionsXml = result.sections
       .map(
         (s) =>
-          `<section id="${s.sectionId}" state="${s.state ?? ''}" position="${s.position}">${s.content}</section>`,
+          `<section id="${xmlEscape(s.sectionId)}" state="${xmlEscape(s.state ?? '')}" position="${s.position}">${xmlEscape(s.content)}</section>`,
       )
       .join('');
 
     return {
       content: [{
         type: 'text',
-        text: `<result><status version_id="${result.versionId}" updated_at="${result.updatedAt}">${result.content}${sectionsXml}</status></result>`,
+        text: `<result><status version_id="${result.versionId}" updated_at="${result.updatedAt}">${xmlEscape(result.content)}${sectionsXml}</status></result>`,
       }],
     };
   };
@@ -69,6 +65,11 @@ export function registerStatusTools(
         content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_id, content, and version_id are required') }],
         isError: true,
       };
+    }
+
+    const sizeError = validateContentSize(content);
+    if (sizeError) {
+      return { content: [{ type: 'text', text: sizeError }], isError: true };
     }
 
     const result = replaceStatus(db, { entryId, content, versionId });
@@ -144,7 +145,7 @@ export function registerStatusTools(
           | undefined;
 
         if (nextSection) {
-          nextSectionXml = `<next_section id="${nextSection.section_id}" state="${nextSection.state ?? ''}" position="${nextSection.position}">${nextSection.content}</next_section>`;
+          nextSectionXml = `<next_section id="${xmlEscape(nextSection.section_id)}" state="${xmlEscape(nextSection.state ?? '')}" position="${nextSection.position}">${xmlEscape(nextSection.content)}</next_section>`;
         } else {
           nextSectionXml = '<next_section>none</next_section>';
         }
@@ -154,7 +155,7 @@ export function registerStatusTools(
     return {
       content: [{
         type: 'text',
-        text: `<result><updated section_id="${sectionId}" state="${state ?? ''}"/>${nextSectionXml}</result>`,
+        text: `<result><updated section_id="${xmlEscape(sectionId)}" state="${xmlEscape(state ?? '')}"/>${nextSectionXml}</result>`,
       }],
     };
   };
@@ -188,7 +189,7 @@ export function registerStatusTools(
     return {
       content: [{
         type: 'text',
-        text: `<result><added section_id="${sectionId}"/></result>`,
+        text: `<result><added section_id="${xmlEscape(sectionId)}"/></result>`,
       }],
     };
   };
@@ -220,7 +221,7 @@ export function registerStatusTools(
     return {
       content: [{
         type: 'text',
-        text: `<result><removed section_id="${sectionId}"/></result>`,
+        text: `<result><removed section_id="${xmlEscape(sectionId)}"/></result>`,
       }],
     };
   };

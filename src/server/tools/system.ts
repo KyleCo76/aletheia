@@ -1,10 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
-
-type ToolHandler = (args: Record<string, unknown>) => {
-  content: Array<{ type: string; text: string }>;
-  isError?: boolean;
-};
+import type { ToolHandler } from './auth.js';
+import { xmlEscape } from '../../lib/errors.js';
 
 const HELP_TOPICS: Record<string, string> = {
   general:
@@ -44,10 +41,10 @@ const HELP_TOPICS: Record<string, string> = {
 
   status:
     'Status documents are living state-machines for tracking multi-step workflows.\n\n' +
-    'Lifecycle: read_status() -> replace_status(doc) or update_status(section, content)\n' +
-    '- Sections have a name, content, state (e.g., "pending", "in-progress", "done"), and position\n' +
-    '- add_section(name, content, state) / remove_section(name) to modify structure\n' +
-    '- update_status(section, content, continue: true) appends to a section without replacing it\n\n' +
+    'Lifecycle: read_status() -> replace_status(content, version_id) or update_status(section_id, state)\n' +
+    '- Sections have an id, content, state (e.g., "pending", "in-progress", "done"), and position\n' +
+    '- add_section(section_id, content) / remove_section(section_id) to modify structure\n' +
+    '- update_status(section_id, state, continue: true) updates state and returns next section\n\n' +
     'Status docs are ephemeral by design — they track "where things stand right now" and are ' +
     'typically replaced each session. For persistent knowledge, promote insights to memory.',
 
@@ -93,7 +90,7 @@ export function registerSystemTools(
       return {
         content: [{
           type: 'text',
-          text: `<result><help>Unknown topic "${topic}". Available: ${available}</help></result>`,
+          text: `<result><help>Unknown topic "${xmlEscape(topic)}". Available: ${available}</help></result>`,
         }],
       };
     }
@@ -101,7 +98,7 @@ export function registerSystemTools(
     return {
       content: [{
         type: 'text',
-        text: `<result><help topic="${topic}">${text}</help></result>`,
+        text: `<result><help topic="${xmlEscape(topic)}">${text}</help></result>`,
       }],
     };
   };
