@@ -88,12 +88,37 @@ function garbageCollectSockets(): void {
   }
 }
 
+// Well-known fallback pointer file used by v0.1.0. Still written for
+// backward compatibility with existing hooks that don't know about the
+// per-session pointer yet.
 const CURRENT_SOCKET_FILE = path.join(SOCKETS_DIR, 'current');
 
-function registerCleanup(socketPath: string): void {
+/**
+ * Per-session pointer file keyed by Claude Code's PID (i.e. the MCP
+ * server's parent process). Because Claude Code spawns both the MCP
+ * server and the hook commands as direct children, both share the same
+ * ppid at runtime. Hooks can therefore locate "their own" session's
+ * socket unambiguously by reading `claude-<PPID>.sock.path`, avoiding
+ * the race where a shared `current` file gets overwritten by whichever
+ * MCP server started most recently.
+ */
+function perSessionPointerPath(parentPid: number): string {
+  return path.join(SOCKETS_DIR, `claude-${parentPid}.sock.path`);
+}
+
+function registerCleanup(socketPath: string, sessionPointerPath: string): void {
   const cleanup = () => {
     try { fs.unlinkSync(socketPath); } catch { /* ignore */ }
-    try { fs.unlinkSync(CURRENT_SOCKET_FILE); } catch { /* ignore */ }
+    try { fs.unlinkSync(sessionPointerPath); } catch { /* ignore */ }
+    // Only clear the shared `current` file if it still points at our
+    // socket — otherwise we'd stomp on a concurrent session that has
+    // since taken ownership of it.
+    try {
+      const current = fs.readFileSync(CURRENT_SOCKET_FILE, 'utf-8').trim();
+      if (current === socketPath) {
+        fs.unlinkSync(CURRENT_SOCKET_FILE);
+      }
+    } catch { /* ignore */ }
   };
 
   process.on('SIGINT', () => {
@@ -155,10 +180,19 @@ export async function startSocketServer(
 
     boundSocketPath = socketPath;
 
-    // Write socket path to well-known file for hook discovery
+    // Write a per-session pointer file keyed by our parent PID (Claude
+    // Code's PID). Sibling hooks share the same ppid and read from this
+    // path first, so each session's hooks only ever hit their own MCP
+    // server's socket — fixing the shared-current-file race.
+    const sessionPointerPath = perSessionPointerPath(process.ppid);
+    fs.writeFileSync(sessionPointerPath, socketPath, { mode: 0o600 });
+
+    // Also write the legacy `current` file for backward compatibility
+    // with older hooks and first-session discovery when per-session
+    // pointers aren't available (e.g., if the ppid lookup fails).
     fs.writeFileSync(CURRENT_SOCKET_FILE, socketPath, { mode: 0o600 });
 
-    registerCleanup(socketPath);
+    registerCleanup(socketPath, sessionPointerPath);
   } finally {
     // Release lockfile
     await unlock(LOCKFILE_PATH);

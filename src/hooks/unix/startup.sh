@@ -1,6 +1,11 @@
 #!/bin/sh
 SOCK="${ALETHEIA_SOCK:-}"
-# Discover socket from well-known file if env var not set
+# Discover socket. Prefer per-session pointer keyed by Claude Code's
+# PID ($PPID here is the shell's parent = Claude Code, same as the MCP
+# server's ppid). Fall back to the legacy `current` file.
+if [ -z "$SOCK" ] && [ -f "$HOME/.aletheia/sockets/claude-$PPID.sock.path" ]; then
+  SOCK=$(cat "$HOME/.aletheia/sockets/claude-$PPID.sock.path" 2>/dev/null)
+fi
 if [ -z "$SOCK" ] && [ -f "$HOME/.aletheia/sockets/current" ]; then
   SOCK=$(cat "$HOME/.aletheia/sockets/current" 2>/dev/null)
 fi
