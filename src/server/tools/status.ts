@@ -58,11 +58,18 @@ export function registerStatusTools(
 
     const entryId = args.entry_id as string | undefined;
     const content = args.content as string | undefined;
-    const versionId = args.version_id as string | undefined;
+    // version_id may be an empty string on first write to a newly
+    // created status entry — the caller has no prior version to quote.
+    // The replaceStatus query already handles missing documents by
+    // creating a fresh one and minting a new version_id, ignoring the
+    // passed value; the handler was just over-strict in its truthiness
+    // check. Callers with an existing version_id must still pass it for
+    // OCC to engage.
+    const versionId = (args.version_id as string | undefined) ?? '';
 
-    if (!entryId || !content || !versionId) {
+    if (!entryId || !content) {
       return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_id, content, and version_id are required') }],
+        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_id and content are required') }],
         isError: true,
       };
     }
