@@ -1,34 +1,27 @@
 import type Database from 'better-sqlite3';
 import crypto from 'crypto';
 
-export function readStatus(
-  db: Database.Database,
-  params: { entryId: string; sectionId?: string }
-): {
+type StatusResult = {
   id: string;
   content: string;
   versionId: string;
   updatedAt: string;
   sections: Array<{ id: string; sectionId: string; content: string; state: string | null; position: number }>;
-} | null {
-  const doc = db.prepare(
-    `SELECT id, content, version_id, updated_at FROM status_documents WHERE entry_id = ?`
-  ).get(params.entryId) as
-    | { id: string; content: string; version_id: string; updated_at: string }
-    | undefined;
+};
 
-  if (!doc) {
-    return null;
-  }
-
+function loadSections(
+  db: Database.Database,
+  statusId: string,
+  sectionId?: string,
+): Array<{ id: string; sectionId: string; content: string; state: string | null; position: number }> {
   let sectionSql = `SELECT id, section_id, content, state, position
                      FROM status_sections
                      WHERE status_id = ?`;
-  const bindings: unknown[] = [doc.id];
+  const bindings: unknown[] = [statusId];
 
-  if (params.sectionId) {
+  if (sectionId) {
     sectionSql += ' AND section_id = ?';
-    bindings.push(params.sectionId);
+    bindings.push(sectionId);
   }
 
   sectionSql += ' ORDER BY position ASC';
@@ -41,18 +34,68 @@ export function readStatus(
     position: number;
   }>;
 
+  return sections.map((s) => ({
+    id: s.id,
+    sectionId: s.section_id,
+    content: s.content,
+    state: s.state,
+    position: s.position,
+  }));
+}
+
+export function readStatus(
+  db: Database.Database,
+  params: { entryId: string; sectionId?: string }
+): StatusResult | null {
+  const doc = db.prepare(
+    `SELECT id, content, version_id, updated_at FROM status_documents WHERE entry_id = ?`
+  ).get(params.entryId) as
+    | { id: string; content: string; version_id: string; updated_at: string }
+    | undefined;
+
+  if (!doc) {
+    return null;
+  }
+
   return {
     id: doc.id,
     content: doc.content,
     versionId: doc.version_id,
     updatedAt: doc.updated_at,
-    sections: sections.map((s) => ({
-      id: s.id,
-      sectionId: s.section_id,
-      content: s.content,
-      state: s.state,
-      position: s.position,
-    })),
+    sections: loadSections(db, doc.id, params.sectionId),
+  };
+}
+
+/**
+ * Read the most-recently-updated status document within a project namespace.
+ * Used by the injection builders which know the session's project scope
+ * (from claim/bootstrap) but not a specific entry UUID.
+ */
+export function readStatusByProject(
+  db: Database.Database,
+  params: { projectNamespace: string; sectionId?: string }
+): StatusResult | null {
+  const doc = db.prepare(
+    `SELECT s.id, s.content, s.version_id, s.updated_at
+     FROM status_documents s
+     JOIN entries e ON s.entry_id = e.id
+     WHERE e.project_namespace = ?
+     ORDER BY s.updated_at DESC
+     LIMIT 1`
+  ).get(params.projectNamespace) as
+    | { id: string; content: string; version_id: string; updated_at: string }
+    | undefined;
+
+  if (!doc) {
+    return null;
+  }
+
+  return {
+    id: doc.id,
+    content: doc.content,
+    versionId: doc.version_id,
+    updatedAt: doc.updated_at,
+    sections: loadSections(db, doc.id, params.sectionId),
   };
 }
 

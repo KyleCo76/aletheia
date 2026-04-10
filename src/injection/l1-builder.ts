@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../lib/settings.js';
-import { readStatus } from '../db/queries/status.js';
-import { readMemory } from '../db/queries/memory.js';
+import { readStatus, readStatusByProject } from '../db/queries/status.js';
+import { readMemory, readMemoriesByProject } from '../db/queries/memory.js';
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -21,8 +21,12 @@ export function buildL1Payload(
   settings: AletheiaSettings,
   sessionState: Map<string, unknown>
 ): object | null {
+  // Resolve scope: prefer projectNamespace (set on claim/bootstrap) for scoped
+  // queries; fall back to claimedEntry as an entry UUID for simple-mode
+  // sessions where create_entry auto-sets claimedEntry to the new entry's UUID.
+  const projectNamespace = sessionState.get('projectNamespace') as string | undefined;
   const claimedEntry = sessionState.get('claimedEntry') as string | undefined;
-  if (!claimedEntry) return null;
+  if (!projectNamespace && !claimedEntry) return null;
 
   const budget = settings.injection.tokenBudget;
   let usedTokens = 0;
@@ -30,7 +34,9 @@ export function buildL1Payload(
   const payload: Record<string, unknown> = {};
 
   // 1. Current status document
-  const status = readStatus(db, { entryId: claimedEntry });
+  const status = projectNamespace
+    ? readStatusByProject(db, { projectNamespace })
+    : readStatus(db, { entryId: claimedEntry as string });
   if (status) {
     const statusObj = {
       content: status.content,
@@ -44,8 +50,10 @@ export function buildL1Payload(
     }
   }
 
-  // 2. Active memory entries for the claimed entry
-  const memories = readMemory(db, { entryId: claimedEntry });
+  // 2. Active memory entries for the claimed scope
+  const memories = projectNamespace
+    ? readMemoriesByProject(db, { projectNamespace })
+    : readMemory(db, { entryId: claimedEntry as string });
   if (memories.length > 0) {
     const accessCounts = getAccessCounts(sessionState);
 
