@@ -104,6 +104,46 @@ export function readMemory(
   }));
 }
 
+/**
+ * Read active memory entries across all entries in a project namespace.
+ * Used by the injection builders to surface memories by project scope
+ * rather than by a specific entry UUID.
+ */
+export function readMemoriesByProject(
+  db: Database.Database,
+  params: { projectNamespace: string; key?: string }
+): Array<{ id: string; key: string; value: string; versionId: string; updatedAt: string }> {
+  const conditions: string[] = ['e.project_namespace = ?', 'm.archived_at IS NULL'];
+  const bindings: unknown[] = [params.projectNamespace];
+
+  if (params.key) {
+    conditions.push('m.key = ?');
+    bindings.push(params.key);
+  }
+
+  const sql = `SELECT m.id, m.key, m.value, m.version_id, m.updated_at
+               FROM memory_entries m
+               JOIN entries e ON m.entry_id = e.id
+               WHERE ${conditions.join(' AND ')}
+               ORDER BY m.updated_at DESC`;
+
+  const rows = db.prepare(sql).all(...bindings) as Array<{
+    id: string;
+    key: string;
+    value: string;
+    version_id: string;
+    updated_at: string;
+  }>;
+
+  return rows.map((r) => ({
+    id: r.id,
+    key: r.key,
+    value: r.value,
+    versionId: r.version_id,
+    updatedAt: r.updated_at,
+  }));
+}
+
 export function retireMemory(
   db: Database.Database,
   params: { entryId: string; memoryEntryId: string; reason?: string }

@@ -54,7 +54,14 @@ export function registerAuthTools(
 
     sessionState.set('claimedKey', result);
     if (result.entryScope) {
+      // The key's entry_scope IS the project namespace in the multi-agent
+      // model. Set both: claimedEntry for legacy callers (handoff target,
+      // session-info), and projectNamespace so create_entry tags new
+      // entries with the correct scope and the injection builders query
+      // the right project's data. Prior to this fix, only bootstrap set
+      // projectNamespace, so claim-only sessions wrote into 'default'.
       sessionState.set('claimedEntry', result.entryScope);
+      sessionState.set('projectNamespace', result.entryScope);
     }
 
     return {

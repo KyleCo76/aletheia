@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../lib/settings.js';
-import { searchMemory } from '../db/queries/memory.js';
-import { readJournalEntries } from '../db/queries/journal.js';
+import { searchMemory, readMemoriesByProject } from '../db/queries/memory.js';
+import { readJournalEntries, readJournalEntriesByProject } from '../db/queries/journal.js';
 import { listTags } from '../db/queries/tags.js';
 
 function estimateTokens(text: string): number {
@@ -13,16 +13,23 @@ export function buildL2Payload(
   settings: AletheiaSettings,
   sessionState: Map<string, unknown>
 ): object | null {
+  // Resolve scope: prefer projectNamespace for scoped queries, fall back to
+  // claimedEntry as an entry UUID in simple mode.
+  const projectNamespace = sessionState.get('projectNamespace') as string | undefined;
   const claimedEntry = sessionState.get('claimedEntry') as string | undefined;
-  if (!claimedEntry) return null;
+  if (!projectNamespace && !claimedEntry) return null;
 
   const budget = settings.injection.tokenBudget;
   let usedTokens = 0;
 
   const payload: Record<string, unknown> = {};
 
-  // 1. All accessible active memory entries (broader than L1 — no entry filter)
-  const allMemories = searchMemory(db, {});
+  // 1. Active memory entries within scope. In scoped (multi-agent) mode we
+  //    restrict to the project namespace to avoid cross-project leakage;
+  //    in simple mode we fall back to the original "all memories" behavior.
+  const allMemories = projectNamespace
+    ? readMemoriesByProject(db, { projectNamespace })
+    : searchMemory(db, {});
   if (allMemories.length > 0) {
     const accessCounts = (sessionState.get('accessCounts') as Map<string, number>) ?? new Map<string, number>();
 
@@ -47,11 +54,17 @@ export function buildL2Payload(
 
   // 2. Recent undigested journal entries (rolling mode, last N)
   const rollingLimit = settings.memory.rollingDefault;
-  const journalEntries = readJournalEntries(db, {
-    entryId: claimedEntry,
-    mode: 'rolling',
-    limit: rollingLimit,
-  });
+  const journalEntries = projectNamespace
+    ? readJournalEntriesByProject(db, {
+        projectNamespace,
+        mode: 'rolling',
+        limit: rollingLimit,
+      })
+    : readJournalEntries(db, {
+        entryId: claimedEntry as string,
+        mode: 'rolling',
+        limit: rollingLimit,
+      });
 
   if (journalEntries.length > 0) {
     const includedJournal: typeof journalEntries = [];
@@ -77,9 +90,15 @@ export function buildL2Payload(
   }
 
   // 4. Undigested journal entry count (for digest threshold detection)
-  const undigestedCount = db.prepare(
-    `SELECT COUNT(*) as count FROM journal_entries WHERE entry_id = ? AND digested_at IS NULL`
-  ).get(claimedEntry) as { count: number };
+  const undigestedCount = projectNamespace
+    ? (db.prepare(
+        `SELECT COUNT(*) as count FROM journal_entries j
+         JOIN entries e ON j.entry_id = e.id
+         WHERE e.project_namespace = ? AND j.digested_at IS NULL`
+      ).get(projectNamespace) as { count: number })
+    : (db.prepare(
+        `SELECT COUNT(*) as count FROM journal_entries WHERE entry_id = ? AND digested_at IS NULL`
+      ).get(claimedEntry) as { count: number });
 
   payload.undigestedJournalCount = undigestedCount.count;
   payload.digestThreshold = settings.digest.entryThreshold;

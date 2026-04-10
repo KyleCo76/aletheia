@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
+import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import {
   ALETHEIA_HOME,
@@ -85,6 +85,18 @@ time_threshold_hours = ${DEFAULTS.digestTimeThresholdHours}
 # Maximum critical writes per session
 critical_write_cap = ${DEFAULTS.criticalWriteCap}
 
+[limits]
+# Rolling circuit breaker: maximum general writes within the interval.
+# Raise this temporarily for bulk imports / migrations, lower it for
+# normal operation to protect against runaway agents.
+circuit_breaker_writes_per_interval = ${DEFAULTS.circuitBreakerWritesPerInterval}
+# Size of the rolling window in minutes.
+circuit_breaker_interval_minutes = ${DEFAULTS.circuitBreakerIntervalMinutes}
+# Maximum 'critical: true' writes per session (separate counter that
+# runs for the session lifetime, not a rolling window). Overrides the
+# legacy [digest].critical_write_cap setting if both are present.
+critical_write_cap = ${DEFAULTS.criticalWriteCap}
+
 # Enable debug logging to ~/.aletheia/logs/
 debug = false
 `;
@@ -93,21 +105,46 @@ debug = false
   console.error(`[aletheia] Generated settings: ${SETTINGS_PATH}`);
 }
 
-function registerMcpServer(settings: Record<string, unknown>): void {
+/**
+ * Register the Aletheia MCP server with Claude Code by invoking its
+ * own CLI (`claude mcp add`). Earlier versions of this setup wrote an
+ * `mcpServers` entry into ~/.claude/settings.json, but current Claude
+ * Code reads MCP registrations from ~/.claude.json (top-level, managed
+ * by the `claude mcp` subcommand), and silently ignores the legacy
+ * settings.json location. Using the CLI is future-proof — whatever
+ * storage format Claude Code uses today (or in the future), `claude
+ * mcp add` writes to the right place.
+ */
+function registerMcpServer(): void {
   const distDir = getDistDir();
   const serverEntry = path.join(distDir, 'server', 'index.js');
 
-  if (!settings.mcpServers || typeof settings.mcpServers !== 'object') {
-    settings.mcpServers = {};
+  // Check whether aletheia is already registered so we don't error out
+  // on re-run. `claude mcp list` prints one line per server, starting
+  // with "<name>:".
+  const listResult = spawnSync('claude', ['mcp', 'list'], { encoding: 'utf-8' });
+  if (listResult.error) {
+    console.error('[aletheia] Warning: `claude` CLI not found on PATH. Install Claude Code and re-run setup, or register manually with:');
+    console.error(`[aletheia]   claude mcp add -s user aletheia node ${serverEntry}`);
+    return;
   }
-  const mcpServers = settings.mcpServers as Record<string, unknown>;
-  mcpServers.aletheia = {
-    command: 'node',
-    args: [serverEntry],
-    env: {},
-  };
+  if (listResult.status === 0 && typeof listResult.stdout === 'string' && /(^|\n)aletheia:/.test(listResult.stdout)) {
+    console.error('[aletheia] MCP server already registered with Claude Code.');
+    return;
+  }
 
-  console.error(`[aletheia] Registered MCP server: ${serverEntry}`);
+  const addResult = spawnSync(
+    'claude',
+    ['mcp', 'add', '-s', 'user', 'aletheia', 'node', serverEntry],
+    { encoding: 'utf-8' },
+  );
+  if (addResult.status !== 0) {
+    console.error('[aletheia] Warning: `claude mcp add` failed. Register manually with:');
+    console.error(`[aletheia]   claude mcp add -s user aletheia node ${serverEntry}`);
+    if (addResult.stderr) console.error(`[aletheia] stderr: ${addResult.stderr.trim()}`);
+    return;
+  }
+  console.error(`[aletheia] Registered MCP server via 'claude mcp add': ${serverEntry}`);
 }
 
 function registerHooks(settings: Record<string, unknown>): void {
@@ -204,9 +241,13 @@ export async function setup(): Promise<void> {
   // 2. Generate settings.toml
   generateSettingsToml();
 
-  // 3 & 4. Register MCP server and hooks in Claude Code settings
+  // 3. Register the MCP server via the `claude mcp add` CLI (writes to
+  //    ~/.claude.json, which is where current Claude Code reads from).
+  registerMcpServer();
+
+  // 4. Register hooks in ~/.claude/settings.json (still the correct
+  //    location for hooks, verified against Claude Code's behavior).
   const settings = readClaudeSettings();
-  registerMcpServer(settings);
   registerHooks(settings);
   writeClaudeSettings(settings);
 

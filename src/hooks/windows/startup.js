@@ -7,8 +7,12 @@ const path = require('path');
 const os = require('os');
 let pipePath = process.env.ALETHEIA_SOCK || '';
 if (!pipePath) {
-  const currentFile = path.join(os.homedir(), '.aletheia', 'sockets', 'current');
-  try { pipePath = fs.readFileSync(currentFile, 'utf-8').trim(); } catch { /* ignore */ }
+  // Prefer per-session pointer keyed by Claude Code's PID.
+  const sockDir = path.join(os.homedir(), '.aletheia', 'sockets');
+  try { pipePath = fs.readFileSync(path.join(sockDir, `claude-${process.ppid}.sock.path`), 'utf-8').trim(); } catch { /* ignore */ }
+  if (!pipePath) {
+    try { pipePath = fs.readFileSync(path.join(sockDir, 'current'), 'utf-8').trim(); } catch { /* ignore */ }
+  }
 }
 if (!pipePath) process.exit(0);
 

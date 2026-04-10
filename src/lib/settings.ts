@@ -27,6 +27,11 @@ export interface AletheiaSettings {
     timeThresholdHours: number;
     criticalWriteCap: number;
   };
+  limits: {
+    circuitBreakerWritesPerInterval: number;
+    circuitBreakerIntervalMinutes: number;
+    criticalWriteCap: number;
+  };
   debug: boolean;
 }
 
@@ -56,6 +61,11 @@ function getDefaults(): AletheiaSettings {
       timeThresholdHours: DEFAULTS.digestTimeThresholdHours,
       criticalWriteCap: DEFAULTS.criticalWriteCap,
     },
+    limits: {
+      circuitBreakerWritesPerInterval: DEFAULTS.circuitBreakerWritesPerInterval,
+      circuitBreakerIntervalMinutes: DEFAULTS.circuitBreakerIntervalMinutes,
+      criticalWriteCap: DEFAULTS.criticalWriteCap,
+    },
     debug: false,
   };
 }
@@ -81,6 +91,22 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
   return result;
 }
 
+/**
+ * Convert snake_case keys in a plain object to camelCase. Used
+ * specifically for the [limits] section so operators can write the
+ * natural TOML form (circuit_breaker_writes_per_interval) and have it
+ * land on the camelCase TypeScript field. (deepMerge above copies
+ * unknown keys verbatim, so without this the override silently fails.)
+ */
+function snakeToCamelObject(input: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    const camelKey = key.replace(/_([a-z])/g, (_m, ch: string) => ch.toUpperCase());
+    out[camelKey] = value;
+  }
+  return out;
+}
+
 export function loadSettings(): AletheiaSettings {
   const defaults = getDefaults();
 
@@ -102,6 +128,17 @@ export function loadSettings(): AletheiaSettings {
   } catch (err) {
     console.error(`[aletheia] Malformed settings.toml: ${err instanceof Error ? err.message : err}`);
     return defaults;
+  }
+
+  // Normalize the [limits] section from snake_case to camelCase before
+  // merging so TOML keys like `circuit_breaker_writes_per_interval`
+  // actually override the camelCase TypeScript defaults. Other sections
+  // have a pre-existing latent bug here where snake_case keys don't
+  // override their camelCase defaults — fixing that is out of scope for
+  // v0.1.1 (would require wider testing), so we only normalize the new
+  // [limits] section we control.
+  if (parsed.limits && typeof parsed.limits === 'object' && !Array.isArray(parsed.limits)) {
+    parsed.limits = snakeToCamelObject(parsed.limits as Record<string, unknown>);
   }
 
   return deepMerge(defaults as unknown as Record<string, unknown>, parsed) as unknown as AletheiaSettings;

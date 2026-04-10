@@ -80,6 +80,69 @@ export function readJournalEntries(
   }));
 }
 
+/**
+ * Read journal entries across all entries in a project namespace.
+ * Used by the L2 injection builder to surface journals by project scope
+ * rather than by a specific entry UUID.
+ */
+export function readJournalEntriesByProject(
+  db: Database.Database,
+  params: {
+    projectNamespace: string;
+    mode?: 'open' | 'rolling';
+    limit?: number;
+    includeDigested?: boolean;
+  }
+): Array<{
+  id: string;
+  entryId: string;
+  content: string;
+  subSection: string | null;
+  createdAt: string;
+  digestedAt: string | null;
+}> {
+  const conditions: string[] = ['e.project_namespace = ?'];
+  const bindings: unknown[] = [params.projectNamespace];
+
+  if (!params.includeDigested) {
+    conditions.push('j.digested_at IS NULL');
+  }
+
+  const where = conditions.join(' AND ');
+  const limit =
+    params.mode === 'rolling'
+      ? params.limit ?? DEFAULTS.rollingDefault
+      : params.limit;
+
+  let sql = `SELECT j.id, j.entry_id, j.content, j.sub_section, j.created_at, j.digested_at
+             FROM journal_entries j
+             JOIN entries e ON j.entry_id = e.id
+             WHERE ${where}
+             ORDER BY j.created_at DESC`;
+  if (limit !== undefined) {
+    sql += ` LIMIT ?`;
+    bindings.push(limit);
+  }
+
+  const rows = db.prepare(sql).all(...bindings) as Array<{
+    id: string;
+    entry_id: string;
+    content: string;
+    sub_section: string | null;
+    created_at: string;
+    digested_at: string | null;
+  }>;
+
+  return rows.map((r) => ({
+    id: r.id,
+    entryId: r.entry_id,
+    content: r.content,
+    subSection: r.sub_section,
+    createdAt: r.created_at,
+    digestedAt: r.digested_at,
+  }));
+}
+
 export function searchJournal(
   db: Database.Database,
   params: { entryId?: string; query?: string; tags?: string[] }
