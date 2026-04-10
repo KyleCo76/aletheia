@@ -85,6 +85,18 @@ time_threshold_hours = ${DEFAULTS.digestTimeThresholdHours}
 # Maximum critical writes per session
 critical_write_cap = ${DEFAULTS.criticalWriteCap}
 
+[limits]
+# Rolling circuit breaker: maximum general writes within the interval.
+# Raise this temporarily for bulk imports / migrations, lower it for
+# normal operation to protect against runaway agents.
+circuit_breaker_writes_per_interval = ${DEFAULTS.circuitBreakerWritesPerInterval}
+# Size of the rolling window in minutes.
+circuit_breaker_interval_minutes = ${DEFAULTS.circuitBreakerIntervalMinutes}
+# Maximum 'critical: true' writes per session (separate counter that
+# runs for the session lifetime, not a rolling window). Overrides the
+# legacy [digest].critical_write_cap setting if both are present.
+critical_write_cap = ${DEFAULTS.criticalWriteCap}
+
 # Enable debug logging to ~/.aletheia/logs/
 debug = false
 `;

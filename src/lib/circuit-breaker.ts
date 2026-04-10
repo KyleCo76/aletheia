@@ -10,11 +10,19 @@ const SESSION_KEY = 'generalWriteLog';
 
 export function checkGeneralCircuitBreaker(
   sessionState: Map<string, unknown>,
-  _settings: AletheiaSettings,
+  settings: AletheiaSettings,
 ): { blocked: true; response: { content: Array<{ type: string; text: string }>; isError: boolean } } | { blocked: false } {
   const now = Date.now();
-  const intervalMs = DEFAULTS.circuitBreakerIntervalMinutes * 60 * 1000;
-  const maxWrites = DEFAULTS.circuitBreakerWritesPerInterval;
+  // Read from settings.limits (populated from the [limits] section of
+  // settings.toml) so operators can raise the cap during bulk imports
+  // and lower it afterwards, without editing source. Falls back to the
+  // built-in defaults if settings.limits isn't present (e.g., an older
+  // settings.toml from v0.1.0).
+  const intervalMinutes =
+    settings.limits?.circuitBreakerIntervalMinutes ?? DEFAULTS.circuitBreakerIntervalMinutes;
+  const maxWrites =
+    settings.limits?.circuitBreakerWritesPerInterval ?? DEFAULTS.circuitBreakerWritesPerInterval;
+  const intervalMs = intervalMinutes * 60 * 1000;
 
   let log = sessionState.get(SESSION_KEY) as WriteRecord[] | undefined;
   if (!log) {
@@ -36,7 +44,7 @@ export function checkGeneralCircuitBreaker(
           type: 'text',
           text: formatError(
             'CIRCUIT_BREAKER',
-            `General write limit (${maxWrites} per ${DEFAULTS.circuitBreakerIntervalMinutes} minutes) exceeded. Wait before writing again.`,
+            `General write limit (${maxWrites} per ${intervalMinutes} minutes) exceeded. Wait before writing again.`,
           ),
         }],
         isError: true,

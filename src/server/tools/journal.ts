@@ -51,13 +51,17 @@ export function registerJournalTools(
         };
       }
 
-      // Circuit breaker check
+      // Circuit breaker check. Prefer the new [limits].critical_write_cap
+      // setting, fall back to the legacy [digest].critical_write_cap
+      // location for backward compatibility with v0.1.0 settings.toml.
       const count = (sessionState.get('criticalWriteCount') as number) ?? 0;
-      if (count >= settings.digest.criticalWriteCap) {
+      const criticalWriteCap =
+        settings.limits?.criticalWriteCap ?? settings.digest.criticalWriteCap;
+      if (count >= criticalWriteCap) {
         return {
           content: [{
             type: 'text',
-            text: formatError('CIRCUIT_BREAKER', `Critical write cap (${settings.digest.criticalWriteCap}) exceeded. Use standard write_journal instead.`),
+            text: formatError('CIRCUIT_BREAKER', `Critical write cap (${criticalWriteCap}) exceeded. Use standard write_journal instead.`),
           }],
           isError: true,
         };
