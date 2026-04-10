@@ -1,0 +1,25 @@
+{
+  "name": "aletheia",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": { "aletheia": "./dist/cli/cli.js" },
+  "files": ["dist", "hooks", "src/templates"],
+  "engines": { "node": ">=18.0.0" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest",
+    "better-sqlite3": "latest",
+    "smol-toml": "latest",
+    "proper-lockfile": "latest"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/better-sqlite3": "latest",
+    "@types/node": "^18.0.0"
+  },
+  "scripts": {
+    "build": "tsc && npm run copy-hooks",
+    "copy-hooks": "mkdir -p hooks/unix hooks/windows && cp src/hooks/unix/*.sh hooks/unix/ && cp src/hooks/windows/*.js hooks/windows/",
+    "prepare": "npm run build",
+    "test": "node --test --test-reporter spec"
+  }
+}

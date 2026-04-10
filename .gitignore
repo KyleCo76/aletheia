@@ -1,0 +1,12 @@
+node_modules/
+dist/
+hooks/
+*.db
+*.db-wal
+*.db-shm
+.claude/
+.remember/
+pm-status.json
+activity-log/
+aletheia-code-review.md
+aletheia-coverage-check.md

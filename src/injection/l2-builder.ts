@@ -1,0 +1,88 @@
+import type Database from 'better-sqlite3';
+import type { AletheiaSettings } from '../lib/settings.js';
+import { searchMemory } from '../db/queries/memory.js';
+import { readJournalEntries } from '../db/queries/journal.js';
+import { listTags } from '../db/queries/tags.js';
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+export function buildL2Payload(
+  db: Database.Database,
+  settings: AletheiaSettings,
+  sessionState: Map<string, unknown>
+): object | null {
+  const claimedEntry = sessionState.get('claimedEntry') as string | undefined;
+  if (!claimedEntry) return null;
+
+  const budget = settings.injection.tokenBudget;
+  let usedTokens = 0;
+
+  const payload: Record<string, unknown> = {};
+
+  // 1. All accessible active memory entries (broader than L1 — no entry filter)
+  const allMemories = searchMemory(db, {});
+  if (allMemories.length > 0) {
+    const accessCounts = (sessionState.get('accessCounts') as Map<string, number>) ?? new Map<string, number>();
+
+    const sorted = [...allMemories].sort((a, b) => {
+      const timeDiff = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return (accessCounts.get(b.id) ?? 0) - (accessCounts.get(a.id) ?? 0);
+    });
+
+    const includedMemories: typeof allMemories = [];
+    for (const mem of sorted) {
+      const memTokens = estimateTokens(JSON.stringify(mem));
+      if (usedTokens + memTokens > budget) break;
+      includedMemories.push(mem);
+      usedTokens += memTokens;
+    }
+
+    if (includedMemories.length > 0) {
+      payload.memories = includedMemories;
+    }
+  }
+
+  // 2. Recent undigested journal entries (rolling mode, last N)
+  const rollingLimit = settings.memory.rollingDefault;
+  const journalEntries = readJournalEntries(db, {
+    entryId: claimedEntry,
+    mode: 'rolling',
+    limit: rollingLimit,
+  });
+
+  if (journalEntries.length > 0) {
+    const includedJournal: typeof journalEntries = [];
+    for (const entry of journalEntries) {
+      const entryTokens = estimateTokens(JSON.stringify(entry));
+      if (usedTokens + entryTokens > budget) break;
+      includedJournal.push(entry);
+      usedTokens += entryTokens;
+    }
+
+    if (includedJournal.length > 0) {
+      payload.journal = includedJournal;
+    }
+  }
+
+  // 3. Tag list with counts
+  const tags = listTags(db);
+  if (tags.length > 0) {
+    const tagsTokens = estimateTokens(JSON.stringify(tags));
+    if (usedTokens + tagsTokens <= budget) {
+      payload.tags = tags;
+    }
+  }
+
+  // 4. Undigested journal entry count (for digest threshold detection)
+  const undigestedCount = db.prepare(
+    `SELECT COUNT(*) as count FROM journal_entries WHERE entry_id = ? AND digested_at IS NULL`
+  ).get(claimedEntry) as { count: number };
+
+  payload.undigestedJournalCount = undigestedCount.count;
+  payload.digestThreshold = settings.digest.entryThreshold;
+
+  return Object.keys(payload).length > 0 ? payload : null;
+}
