@@ -71,6 +71,59 @@ export function createKey(
   return { id, keyValue, permissions: params.permissions };
 }
 
+/**
+ * Smallest shippable slice of item #32 (teammate memory
+ * segregation). Walks the `keys.created_by` chain upward from a
+ * given key id and returns a slash-joined ancestor path from the
+ * root down to the key itself.
+ *
+ * For a root key with no parent, returns the key's own id. For a
+ * key created by parent P which was created by root R, returns
+ * `R/P/id`. Meant to be stored on `sessionState` at claim time
+ * and read by future injection builders (owner_chain migration
+ * pending; see docs/v0.2.0-design/teammate-segregation.md).
+ *
+ * Cycle defence:
+ *   - Depth cap of 16 — more than any realistic PM hierarchy. A
+ *     longer chain is almost certainly a data corruption bug;
+ *     the function stops walking and returns the prefix it has.
+ *   - Visited-id set catches literal cycles (a key pointing to
+ *     itself through any number of intermediate hops).
+ *
+ * Unknown key id (not in `keys` table): returns an empty string.
+ * Caller should treat that the same as "no claim / no chain".
+ */
+const KEY_CHAIN_MAX_DEPTH = 16;
+
+export function getKeyChain(db: Database.Database, keyId: string): string {
+  const stmt = db.prepare(`SELECT id, created_by FROM keys WHERE id = ?`);
+  const chain: string[] = [];
+  const visited = new Set<string>();
+
+  let currentId: string | null = keyId;
+  while (currentId && chain.length < KEY_CHAIN_MAX_DEPTH) {
+    if (visited.has(currentId)) break; // literal cycle
+    visited.add(currentId);
+
+    const row = stmt.get(currentId) as
+      | { id: string; created_by: string | null }
+      | undefined;
+    if (!row) {
+      // Unknown key id encountered mid-walk. Abandon the rest of
+      // the chain — this typically means the key was deleted
+      // after a session started. Return whatever prefix we built.
+      break;
+    }
+
+    chain.push(row.id);
+    currentId = row.created_by;
+  }
+
+  // We built the chain child-first; reverse so the root is at
+  // the head. Format matches the design doc's owner_chain column.
+  return chain.reverse().join('/');
+}
+
 export function validateKey(
   db: Database.Database,
   params: { keyValue: string }

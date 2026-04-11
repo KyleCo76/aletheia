@@ -7,6 +7,7 @@ import {
   listKeys,
   canDelegatePermission,
   canDelegateScope,
+  getKeyChain,
 } from '../../db/queries/keys.js';
 import { xmlEscape } from '../../lib/errors.js';
 import { toolError, toolSuccess } from './response-format.js';
@@ -127,6 +128,15 @@ export function registerAuthTools(
     if (!result) return toolError('INVALID_KEY', 'Key not found or invalid');
 
     sessionState.set('claimedKey', result);
+
+    // Item #32 smallest slice: precompute the key ancestry chain
+    // at claim time and stash it on sessionState. Readers can
+    // pick it up later via sessionState.get('keyChain') once the
+    // owner_chain column + readMemoriesByChain ship. Today it's
+    // populated but unused — having it now means the claim path
+    // doesn't need to change when the read side lands.
+    sessionState.set('keyChain', getKeyChain(db, result.id));
+
     if (result.entryScope) {
       // The key's entry_scope IS the project namespace in the multi-agent
       // model. Set both: claimedEntry for legacy callers (handoff target,
@@ -208,6 +218,12 @@ export function registerAuthTools(
       permissions: keyResult.permissions,
       entryScope: name,
     });
+    // Item #32 smallest slice: precompute key chain for the
+    // bootstrapped root key too. This is a single-entry chain
+    // (bootstrap keys have no parent), so the stored value is
+    // just the key's own id — but populating it keeps the claim
+    // and bootstrap paths symmetric.
+    sessionState.set('keyChain', getKeyChain(db, keyResult.id));
     sessionState.set('claimedEntry', name);
 
     return toolSuccess(
