@@ -129,7 +129,24 @@ export function registerStatusTools(
       };
     }
 
-    updateStatusSection(db, { statusId: doc.id, sectionId, state });
+    const updateResult = updateStatusSection(db, { statusId: doc.id, sectionId, state });
+
+    // Bug #27: prior to v0.1.2 this call's return was discarded, so a
+    // section_id that didn't match any row produced a silent success.
+    // Surface the miss as NOT_FOUND so callers can react instead of
+    // assuming their state machine moved.
+    if (!updateResult.found) {
+      return {
+        content: [{
+          type: 'text',
+          text: formatError(
+            'NOT_FOUND',
+            `Section "${sectionId}" not found in status document for entry "${entryId}"`,
+          ),
+        }],
+        isError: true,
+      };
+    }
 
     let nextSectionXml = '';
 

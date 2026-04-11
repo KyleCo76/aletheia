@@ -1,0 +1,81 @@
+name: Release tarball
+
+# Builds a prebuilt npm tarball and attaches it to the GitHub release
+# whenever a `v*` tag is pushed. This is the supported install path —
+# users globally install via the tarball URL rather than via
+# `npm install -g git+https://...`, which is unreliable because the
+# `prepare` lifecycle script depends on devDependencies (notably
+# `typescript`) that npm sometimes omits during global git installs.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies (including dev)
+        run: npm ci
+
+      - name: Build and pack
+        # `npm pack` runs the `prepare` lifecycle (scripts/prepare.mjs
+        # → tsc → copy-hooks). devDeps are present from the previous
+        # step so the build succeeds and the resulting tarball includes
+        # the prebuilt dist/ directory.
+        run: npm pack
+
+      - name: Determine tarball filename
+        id: tarball
+        run: |
+          set -euo pipefail
+          file=$(ls aletheia-*.tgz | head -n1)
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+          echo "Built tarball: $file"
+
+      - name: Create or update GitHub release
+        # All GitHub-controlled inputs are routed through env vars
+        # rather than direct ${{ ... }} interpolation inside the run
+        # block. This avoids workflow command-injection footguns even
+        # though the inputs here (a tag name and a filename we built
+        # ourselves) are already trusted.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          TARBALL: ${{ steps.tarball.outputs.file }}
+        run: |
+          set -euo pipefail
+          install_url="https://github.com/${REPO}/releases/download/${TAG}/${TARBALL}"
+
+          notes_file=$(mktemp)
+          {
+            printf 'Aletheia %s — prebuilt npm tarball.\n\n' "$TAG"
+            printf '## Install\n\n'
+            printf '```bash\n'
+            printf 'npm install -g %s\n' "$install_url"
+            printf '```\n\n'
+            printf 'The tarball ships with a precompiled `dist/` directory, so `tsc` is not required on the install host.\n'
+          } > "$notes_file"
+
+          # Idempotent: if the release already exists (e.g. a re-run),
+          # add/replace the asset; otherwise create it fresh.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$TARBALL" --clobber
+          else
+            gh release create "$TAG" "$TARBALL" \
+              --title "Aletheia $TAG" \
+              --notes-file "$notes_file"
+          fi

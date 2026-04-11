@@ -1,6 +1,6 @@
 {
   "name": "aletheia",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "bin": { "aletheia": "./dist/cli/cli.js" },
   "exports": {
@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsc && npm run copy-hooks",
     "copy-hooks": "mkdir -p hooks/unix hooks/windows && cp src/hooks/unix/*.sh hooks/unix/ && cp src/hooks/windows/*.js hooks/windows/ && chmod +x hooks/unix/*.sh hooks/windows/*.js",
-    "prepare": "npm run build",
-    "test": "node --test --test-reporter spec"
+    "prepare": "node ./scripts/prepare.mjs",
+    "test": "npm run build && node --test --test-reporter spec 'test/**/*.test.mjs'"
   }
 }

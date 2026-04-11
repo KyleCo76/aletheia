@@ -143,7 +143,7 @@ export function replaceStatus(
 export function updateStatusSection(
   db: Database.Database,
   params: { statusId: string; sectionId: string; state?: string; content?: string }
-): void {
+): { found: boolean } {
   const sets: string[] = [];
   const bindings: unknown[] = [];
 
@@ -157,13 +157,30 @@ export function updateStatusSection(
     bindings.push(params.content);
   }
 
-  if (sets.length === 0) return;
+  // Existence check and UPDATE share a single immediate transaction so
+  // the {found} return reflects the same row state the UPDATE saw — no
+  // racing INSERT can sneak between the SELECT and the UPDATE. Bug #27
+  // (silent no-op on missing section) was caused by callers having no
+  // way to distinguish "row updated" from "row absent"; the {found}
+  // return value is the signal handlers check.
+  return db.transaction(() => {
+    const exists = db.prepare(
+      `SELECT 1 FROM status_sections WHERE status_id = ? AND section_id = ?`
+    ).get(params.statusId, params.sectionId);
 
-  bindings.push(params.statusId, params.sectionId);
+    if (!exists) {
+      return { found: false };
+    }
 
-  db.prepare(
-    `UPDATE status_sections SET ${sets.join(', ')} WHERE status_id = ? AND section_id = ?`
-  ).run(...bindings);
+    if (sets.length > 0) {
+      bindings.push(params.statusId, params.sectionId);
+      db.prepare(
+        `UPDATE status_sections SET ${sets.join(', ')} WHERE status_id = ? AND section_id = ?`
+      ).run(...bindings);
+    }
+
+    return { found: true };
+  }).immediate();
 }
 
 export function addSection(
