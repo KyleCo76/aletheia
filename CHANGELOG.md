@@ -2,6 +2,75 @@
 
 All notable changes to Aletheia are documented in this file.
 
+## v0.2.4 — 2026-04-11
+
+Fourth same-day patch release. Closes the single biggest
+outstanding security gap from round 1 and ships the foundation
+for item #32.
+
+### Fixed
+
+- **Write handlers used to fail-OPEN on key rotation mid-session.**
+  Round 1 (v0.2.3, commit `c4c1d91`) closed the fail-open on the
+  three privileged auth handlers — `create_key`, `modify_key`,
+  `list_keys` — but intentionally left the wider write surface
+  alone. Write handlers in `journal.ts`, `memory.ts`, `status.ts`,
+  `handoff.ts`, and `entries.ts` trusted `sessionState.claimedKey`
+  without re-validating against the db, so a revoked read-write
+  key could still pump data into the journal, mint memories,
+  overwrite status docs, and create handoffs until the session
+  died. New shared `claimGuard(db, sessionState, settings)`
+  helper exported from `auth.ts`; all 10 write/mutate handlers
+  (`write_journal`, `promote_to_memory`, `write_memory`,
+  `retire_memory`, `replace_status`, `update_status`,
+  `add_section`, `remove_section`, `create_handoff`,
+  `create_entry`, plus `list_entries` for parity) now call it at
+  handler entry. In dev mode (`enforce=false`) the guard is a
+  no-op so unclaimed dev sessions continue to write freely.
+  `entries.ts`'s local `requireClaim` helper is deleted.
+
+### Changed
+
+- **Item #31 migration complete — `validateContentSize` now
+  returns typed `ContentSizeError`.** The helper in
+  `lib/errors.ts` used to return a pre-formatted XML error
+  string which callers had to splice into an inline
+  `{content:[...], isError:true}` envelope. Three handlers
+  (`write_journal`, `write_memory`, `replace_status`) carried
+  that legacy shape just for the size-check branch while every
+  other error path used `toolError`. Now `validateContentSize`
+  returns `{ code: 'CONTENT_TOO_LARGE', message } | null` and
+  callers wrap with `toolError(code, message)` — symmetric with
+  every other error branch. The bare `formatError` helper
+  remains available for `circuit-breaker.ts` and
+  `server/index.ts` which still format their own cross-layer
+  errors; those aren't tool-handler paths and can be follow-ups.
+
+### Added
+
+- **Item #32 — smallest shippable slice shipped.** Full
+  design at `docs/v0.2.0-design/teammate-segregation.md`.
+  v0.2.4 ships the foundation:
+    1. `getKeyChain(db, keyId): string` in
+       `db/queries/keys.ts` walks `keys.created_by` upward and
+       returns a slash-joined root-to-leaf ancestor path.
+       Cycle-defended (visited set) and depth-capped at 16.
+    2. The `claim` and `bootstrap` handlers now call
+       `getKeyChain` at auth time and stash the result on
+       `sessionState.keyChain`. Populated but unused — readers
+       don't consume it yet.
+  This decouples the auth path from the future read-side work:
+  when the `owner_chain` column migration lands, no changes are
+  needed to `claim` / `bootstrap`. Four open questions from the
+  design doc still block the full read-side implementation;
+  they're waiting for Kyle / Dramaturg input.
+
+### Test infrastructure
+
+- **56 tests total**, all green. v0.2.4 added 12 new cases
+  across `test/write-handler-refresh.test.mjs` (5) and
+  `test/key-chain.test.mjs` (7).
+
 ## v0.2.3 — 2026-04-11
 
 Third same-day patch release. Two real bug fixes caught during the
