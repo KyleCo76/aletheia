@@ -1,6 +1,13 @@
 import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
-import { validateKey, createKey, modifyKey, listKeys } from '../../db/queries/keys.js';
+import {
+  validateKey,
+  createKey,
+  modifyKey,
+  listKeys,
+  canDelegatePermission,
+  canDelegateScope,
+} from '../../db/queries/keys.js';
 import { formatError, xmlEscape } from '../../lib/errors.js';
 import { KEYS_DIR } from '../../lib/constants.js';
 import fs from 'fs';
@@ -181,6 +188,39 @@ export function registerAuthTools(
       if (claimed.permissions !== 'maintenance' && claimed.permissions !== 'create-sub-entries') {
         return {
           content: [{ type: 'text', text: formatError('INSUFFICIENT_PERMISSIONS', 'Requires create-sub-entries or maintenance permission') }],
+          isError: true,
+        };
+      }
+
+      // Item #16 — cascading delegation. The parent (the claimed
+      // caller) cannot mint a child with strictly higher permission
+      // level or with a scope it doesn't itself hold. Both axes are
+      // checked here so the response message names the specific
+      // violation.
+      if (!canDelegatePermission(claimed.permissions, permissions)) {
+        return {
+          content: [{
+            type: 'text',
+            text: formatError(
+              'INSUFFICIENT_PERMISSIONS',
+              `Cannot delegate "${permissions}" permission from parent "${claimed.permissions}": child permissions must be a subset of parent`,
+            ),
+          }],
+          isError: true,
+        };
+      }
+
+      if (!canDelegateScope(claimed.entryScope, entryScope)) {
+        const childLabel = entryScope ?? 'global';
+        const parentLabel = claimed.entryScope ?? 'global';
+        return {
+          content: [{
+            type: 'text',
+            text: formatError(
+              'INSUFFICIENT_PERMISSIONS',
+              `Cannot delegate scope "${childLabel}" from parent scope "${parentLabel}": scoped parents can only delegate their own scope`,
+            ),
+          }],
           isError: true,
         };
       }
