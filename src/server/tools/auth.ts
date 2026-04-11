@@ -20,15 +20,63 @@ export type ToolHandler = (args: Record<string, unknown>) => {
   isError?: boolean;
 };
 
+/**
+ * Re-validate the cached claim against the keys table. Without
+ * this, a key revoked or modified mid-session had no effect on
+ * the session — the handler kept exercising the stale cached
+ * permission level (fail-open). After this call:
+ *   - Key deleted from the db → clear cache, return null
+ *     (caller treats as unclaimed and NO_CLAIM-fails).
+ *   - Key permissions / entry_scope modified in the db → refresh
+ *     the cache so subsequent checks see the authoritative
+ *     (potentially downgraded) value.
+ *   - Key unchanged → passthrough the cached object.
+ *
+ * Cost: one indexed SELECT per call. The keys table is tiny so
+ * this is cheap. Broader coverage for non-auth write handlers
+ * (write_journal, write_memory, etc.) is a follow-up — they
+ * don't currently call requireClaim at all.
+ */
+function refreshClaim(
+  db: Database.Database,
+  sessionState: Map<string, unknown>,
+): { id: string; permissions: string; entryScope: string | null } | null {
+  const cached = sessionState.get('claimedKey') as
+    | { id: string; permissions: string; entryScope: string | null }
+    | undefined;
+  if (!cached) return null;
+
+  const row = db.prepare(
+    `SELECT id, permissions, entry_scope FROM keys WHERE id = ?`,
+  ).get(cached.id) as
+    | { id: string; permissions: string; entry_scope: string | null }
+    | undefined;
+
+  if (!row) {
+    sessionState.delete('claimedKey');
+    return null;
+  }
+
+  if (row.permissions !== cached.permissions || row.entry_scope !== cached.entryScope) {
+    const refreshed = {
+      id: row.id,
+      permissions: row.permissions,
+      entryScope: row.entry_scope,
+    };
+    sessionState.set('claimedKey', refreshed);
+    return refreshed;
+  }
+
+  return cached;
+}
+
 function requireClaim(
+  db: Database.Database,
   sessionState: Map<string, unknown>,
   settings: AletheiaSettings,
 ): { id: string; permissions: string; entryScope: string | null } | null {
   if (!settings.permissions.enforce) return null;
-  const claimed = sessionState.get('claimedKey') as
-    | { id: string; permissions: string; entryScope: string | null }
-    | undefined;
-  return claimed ?? null;
+  return refreshClaim(db, sessionState);
 }
 
 function claimError(): ToolErrorResponse {
@@ -143,16 +191,13 @@ export function registerAuthTools(
 
     if (!permissions) return toolError('INVALID_INPUT', 'permissions is required');
 
-    // Look up the caller's claim once up front. The "do you have a
-    // claim at all" check is still gated on settings.permissions.enforce
-    // because dev mode (enforce=false) intentionally allows callers
-    // with no claim to exercise the API. But the subset-delegation
-    // invariant below is a SECURITY property, not a permission check:
-    // if a claim DOES exist, it must not be able to mint a child that
-    // exceeds its own authority, regardless of enforce mode.
-    const claimed = sessionState.get('claimedKey') as
-      | { id: string; permissions: string; entryScope: string | null }
-      | undefined;
+    // refreshClaim re-validates the cached claim against the db so
+    // a key revoked or downgraded mid-session is reflected here
+    // (fail-closed on delete, fail-smaller on downgrade). In dev
+    // mode (enforce=false) the caller may still be unclaimed — we
+    // pass the result through and let the subset-check block below
+    // handle the null-claim case.
+    const claimed = refreshClaim(db, sessionState);
 
     if (settings.permissions.enforce) {
       if (!claimed) return claimError();
@@ -215,14 +260,13 @@ export function registerAuthTools(
       );
     }
 
+    // refreshClaim re-validates the cached key against the db —
+    // prevents a revoked key from continuing to modify other keys.
+    const claimed = refreshClaim(db, sessionState);
+
     if (settings.permissions.enforce) {
-      const claimed = requireClaim(sessionState, settings);
       if (!claimed) return claimError();
     }
-
-    const claimed = sessionState.get('claimedKey') as
-      | { id: string; permissions: string; entryScope: string | null }
-      | undefined;
 
     const callerPermissions = claimed?.permissions ?? 'read-only';
 
@@ -238,14 +282,13 @@ export function registerAuthTools(
   };
 
   handlers['list_keys'] = (): ToolErrorResponse | ToolSuccessResponse => {
+    // refreshClaim catches a revoked key mid-session — don't let
+    // a deleted key continue to enumerate descendants.
+    const claimed = refreshClaim(db, sessionState);
+
     if (settings.permissions.enforce) {
-      const claimed = requireClaim(sessionState, settings);
       if (!claimed) return claimError();
     }
-
-    const claimed = sessionState.get('claimedKey') as
-      | { id: string; permissions: string; entryScope: string | null }
-      | undefined;
 
     const keys = listKeys(db, { callerKeyId: claimed?.id });
 
