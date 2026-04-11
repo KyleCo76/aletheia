@@ -42,7 +42,11 @@ export function buildL2Payload(
     const includedMemories: typeof allMemories = [];
     for (const mem of sorted) {
       const memTokens = estimateTokens(JSON.stringify(mem));
-      if (usedTokens + memTokens > budget) break;
+      // Round-3 P3 fix: see l1-builder.ts for the rationale.
+      // Skip oversized items (continue) instead of halting the
+      // loop (break) so smaller, older memories still get a
+      // fair shot at the remaining budget.
+      if (usedTokens + memTokens > budget) continue;
       includedMemories.push(mem);
       usedTokens += memTokens;
     }
@@ -70,7 +74,9 @@ export function buildL2Payload(
     const includedJournal: typeof journalEntries = [];
     for (const entry of journalEntries) {
       const entryTokens = estimateTokens(JSON.stringify(entry));
-      if (usedTokens + entryTokens > budget) break;
+      // Round-3 P3 fix: skip oversized journal entries instead of
+      // halting the loop. Same rationale as the memory loop above.
+      if (usedTokens + entryTokens > budget) continue;
       includedJournal.push(entry);
       usedTokens += entryTokens;
     }

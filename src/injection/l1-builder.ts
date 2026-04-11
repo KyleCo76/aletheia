@@ -67,7 +67,17 @@ export function buildL1Payload(
     const includedMemories: typeof memories = [];
     for (const mem of sorted) {
       const memTokens = estimateTokens(JSON.stringify(mem));
-      if (usedTokens + memTokens > budget) break;
+      // Round-3 P3 fix: skip oversized items (continue) instead of
+      // halting the loop (break). With the prior break, a single
+      // memory larger than the remaining budget would block every
+      // subsequent (smaller, older) memory from injection — even
+      // if dozens of small memories could have fit in the slot the
+      // oversized one was rejected from. Recency sort makes this
+      // especially bad: the freshest memory tends to be the one
+      // that's being actively edited and hasn't been distilled yet,
+      // so it's also the largest. Continue skips it and lets the
+      // smaller memories through.
+      if (usedTokens + memTokens > budget) continue;
       includedMemories.push(mem);
       usedTokens += memTokens;
     }
