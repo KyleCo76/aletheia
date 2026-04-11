@@ -10,6 +10,14 @@ if [ -z "$SOCK" ] && [ -f "$HOME/.aletheia/sockets/current" ]; then
 fi
 TIMEOUT=2
 if [ -z "$SOCK" ]; then exit 0; fi
+# Round-3 P1 fix: short-circuit when the discovered socket path
+# is stale. Without this check, every hook invocation against a
+# dead MCP server waits the full 2s curl timeout before exiting 0.
+# `[ -S ]` is true only when the file exists AND is a unix
+# domain socket — covers both "pointer file pointed at a deleted
+# socket" and "pointer file is corrupt with a path that never
+# existed". Fail-open semantics preserved.
+if [ ! -S "$SOCK" ]; then exit 0; fi
 
 response=$(curl -s --unix-socket "$SOCK" --max-time "$TIMEOUT" "http://localhost/state" 2>/dev/null)
 if [ $? -ne 0 ] || [ -z "$response" ]; then exit 0; fi
