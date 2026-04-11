@@ -2,6 +2,77 @@
 
 All notable changes to Aletheia are documented in this file.
 
+## v0.2.0 — 2026-04-11
+
+Feature release on top of v0.1.2. Local-only commits in this release —
+push deferred to a later session because the v0.1.2 push was blocked
+by a GitHub PAT scope issue (the PAT lacks `workflow` scope, needed
+to add `.github/workflows/release.yml`). Once that's resolved, both
+v0.1.2 and v0.2.0 ship together.
+
+### Added
+
+- **Item #31 — Tool response format embedding.**
+  `src/server/tools/response-format.ts` is the new single source of
+  truth for the shape and error-code vocabulary of MCP tool responses.
+  Exports an `ERROR_CODES` runtime list, an `ErrorCode` TypeScript
+  union, typed `ToolErrorResponse` / `ToolSuccessResponse` shapes, and
+  `toolError` / `toolSuccess` constructors that handlers should use
+  instead of inlining response objects. Misspelled error codes now
+  fail at compile time instead of slipping into the wire format. The
+  pilot migration covers the 5 status-tool handlers (11 call sites);
+  other tool modules continue to import `formatError` directly until
+  follow-up commits migrate them. Wire format is byte-identical.
+
+- **Item #24 — Backup / restore / verify CLI commands.** New
+  `aletheia backup [path]`, `aletheia restore <path>`, and
+  `aletheia verify [path]` subcommands wired in `src/cli/cli.ts`,
+  backed by `src/cli/backup.ts`. All three use better-sqlite3's
+  native online backup API (`db.backup`) so live databases with
+  uncommitted WAL pages are handled correctly — never use
+  `fs.copyFile` on a live SQLite db. `restoreDatabase` validates the
+  source via `verifyDatabase` first, takes a safety backup of the
+  current target so the operation is reversible
+  (`pre-restore-<timestamp>.db` in `~/.aletheia/backups/`), and
+  refuses to overwrite from a corrupt source. The new `~/.aletheia/
+  backups/` directory is the canonical backup home.
+
+- **Item #16 — Cascading key delegation with subset enforcement.**
+  Closes a privilege-escalation hole in v0.1.x: `create_key` only
+  checked that the caller had `create-sub-entries` or `maintenance`
+  permission, then minted a new key with whatever permissions and
+  `entry_scope` the caller asked for. A `create-sub-entries` holder
+  could mint a `maintenance` key, and a project-scoped parent could
+  mint a global child. Enforcement now mirrors the invariant
+  `modifyKey` already enforces for in-place updates, along two axes:
+    1. *Permission level*: child level ≤ parent level. Hardened via
+       `canDelegatePermission(parent, child)`.
+    2. *Entry scope*: a globally-scoped parent can delegate any scope;
+       a project-scoped parent can ONLY delegate its own scope (no
+       upward, no lateral). Hardened via `canDelegateScope`.
+  Both helpers and the previously-private `PERMISSIONS_HIERARCHY` /
+  `permissionLevel` are now exported from `db/queries/keys.ts`. Both
+  checks live behind `settings.permissions.enforce`, matching the
+  existing handler contract — dev mode still bypasses entirely.
+
+- **Item #32 — Teammate memory segregation design doc.**
+  `docs/v0.2.0-design/teammate-segregation.md`. Drafts the v0.2.x
+  approach for segregating sub-agent (worker) writes from the
+  parent PM's memory namespace. Recommends a hybrid of key-chain
+  walking + a denormalized `owner_chain` column populated at write
+  time, queried via LIKE prefix (which uses the index, unlike
+  leading-% LIKE). Read-side implementation NOT shipped in v0.2.0
+  — design discovery is the v0.2.0 deliverable for #32. Includes
+  four open questions for Kyle / Dramaturg.
+
+### Test infrastructure
+
+- **23 tests total**, all green. v0.2.0 added 16 new test cases
+  across `test/response-format.test.mjs` (4),
+  `test/backup-restore.test.mjs` (6), and
+  `test/key-delegation.test.mjs` (10), preserving the 3 v0.1.2
+  bug #27 regression tests intact.
+
 ## v0.1.2 — 2026-04-11
 
 Bug-fix release on top of v0.1.1.
