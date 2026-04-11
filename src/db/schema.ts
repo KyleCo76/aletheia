@@ -143,6 +143,22 @@ function runMigration3(db: Database.Database): void {
   // Add 'status' to the entries.entry_class CHECK constraint.
   // SQLite doesn't support ALTER CHECK, so recreate the table.
   // Must drop dependent view first, then recreate after.
+  //
+  // The DROP TABLE entries / RENAME sequence below is only safe
+  // because the orchestrating `runMigrations` toggles
+  // `PRAGMA foreign_keys = OFF` around this migration. Otherwise
+  // SQLite's DROP TABLE would reject entries that have inbound FK
+  // references from journal_entries / memory_entries /
+  // status_documents / entry_tags, and the operation would fail
+  // with SQLITE_CONSTRAINT_FOREIGNKEY on any database with live
+  // data. `defer_foreign_keys = ON` is NOT sufficient — it only
+  // delays row-level checks, not the DROP TABLE guard, and must be
+  // toggled outside a transaction.
+  //
+  // Prior to the runMigrations-level toggle (added v0.2.3), this
+  // migration worked ONLY when the entries table was empty
+  // (fresh installs). Any live v0.1.0 → v0.2.x upgrade with
+  // populated data would hit SQLITE_CONSTRAINT_FOREIGNKEY.
   db.exec(`
     DROP VIEW IF EXISTS active_tags;
 
@@ -180,11 +196,42 @@ export const CURRENT_SCHEMA_VERSION = migrations.length;
 
 export function runMigrations(db: Database.Database): void {
   const currentVersion = getSchemaVersion(db);
+  if (currentVersion >= migrations.length) return;
 
-  for (let i = currentVersion; i < migrations.length; i++) {
-    const migrate = db.transaction(() => {
-      migrations[i](db);
-    });
-    migrate.immediate();
+  // Some migrations (notably #3, which rebuilds the `entries`
+  // table via DROP + CREATE + RENAME) cannot run with FK
+  // enforcement on. SQLite requires `PRAGMA foreign_keys` to be
+  // toggled OUTSIDE a transaction, so we toggle here at the
+  // orchestrator level. The prior value is captured and restored
+  // in a finally block so we never leak a changed setting back to
+  // the caller. `PRAGMA foreign_key_check` after the migrations
+  // run catches any orphaned rows the migration might have
+  // introduced by mistake — a belt-and-braces guard since FK
+  // enforcement was momentarily disabled.
+  const priorFk = db.pragma('foreign_keys', { simple: true }) as number;
+  if (priorFk === 1) {
+    db.pragma('foreign_keys = OFF');
+  }
+
+  try {
+    for (let i = currentVersion; i < migrations.length; i++) {
+      const migrate = db.transaction(() => {
+        migrations[i](db);
+      });
+      migrate.immediate();
+    }
+
+    if (priorFk === 1) {
+      const violations = db.pragma('foreign_key_check') as Array<unknown>;
+      if (violations.length > 0) {
+        throw new Error(
+          `runMigrations produced ${violations.length} foreign-key violation(s): ${JSON.stringify(violations)}`,
+        );
+      }
+    }
+  } finally {
+    if (priorFk === 1) {
+      db.pragma('foreign_keys = ON');
+    }
   }
 }
