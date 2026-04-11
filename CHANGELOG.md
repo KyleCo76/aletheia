@@ -2,6 +2,53 @@
 
 All notable changes to Aletheia are documented in this file.
 
+## v0.2.1 — 2026-04-11
+
+Patch release on top of v0.2.0. Three targeted bug fixes found via
+PM-Hockey's dogfooding and PM-Aletheia's own v0.2.0 scope review.
+
+### Fixed
+
+- **Bug A — `write_journal` / `write_memory` response echoed only
+  "newly added" tags.** Responses listed only tags whose entry_tags
+  junction row flipped 0→1 during the call — the subset of submitted
+  tags that weren't already attached. A caller submitting an overlap
+  between new tags and tags already on the entry saw the overlap drop
+  from the response and wrongly concluded the tags were not persisted.
+  New `getEntryTags` helper in `db/queries/tags.ts` returns the full
+  post-write tag set; both standard and critical `write_journal` and
+  `write_memory` now echo the union.
+
+- **Bug B — generic `read` on an `entry_class='status'` entry
+  returned an empty envelope.** The `read` handler in `discovery.ts`
+  branched on entry_class being journal / memory / handoff but never
+  covered status, so execution fell through the if-chain with an
+  empty xml buffer. Dedicated `read_status` worked correctly; only
+  the generic `read` had the gap. Fix: add a status branch that
+  dispatches to `readStatus` and emits a `<status>` block in the
+  same shape as `read_status`. A missing `status_documents` row now
+  returns `NOT_FOUND` instead of an empty envelope.
+
+- **Item #16 follow-up — cascading delegation enforcement is now a
+  security invariant, not a permission check.** v0.2.0 gated the
+  `canDelegatePermission` / `canDelegateScope` checks on
+  `settings.permissions.enforce`, which meant a session claimed as
+  `create-sub-entries` could mint a `maintenance` child in dev mode —
+  privilege escalation dressed up as "enforcement is off". The
+  subset checks now run whenever a claim exists, regardless of
+  enforce mode. Unclaimed dev-mode sessions (no parent to compare
+  against) still bypass entirely. The "must have a claim" and
+  "must be at least create-sub-entries" gates remain tied to
+  `enforce` — those are genuine permission checks.
+
+### Test infrastructure
+
+- **31 tests total**, all green. v0.2.1 added 8 new cases across
+  `test/tag-response-union.test.mjs` (4),
+  `test/read-status-dispatch.test.mjs` (3), and replaced the old
+  dev-mode bypass case in `test/key-delegation.test.mjs` with two
+  narrower cases (unclaimed bypass; claimed-still-enforced).
+
 ## v0.2.0 — 2026-04-11
 
 Feature release on top of v0.1.2. Local-only commits in this release —
