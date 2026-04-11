@@ -130,15 +130,26 @@ export function loadSettings(): AletheiaSettings {
     return defaults;
   }
 
-  // Normalize the [limits] section from snake_case to camelCase before
-  // merging so TOML keys like `circuit_breaker_writes_per_interval`
-  // actually override the camelCase TypeScript defaults. Other sections
-  // have a pre-existing latent bug here where snake_case keys don't
-  // override their camelCase defaults — fixing that is out of scope for
-  // v0.1.1 (would require wider testing), so we only normalize the new
-  // [limits] section we control.
-  if (parsed.limits && typeof parsed.limits === 'object' && !Array.isArray(parsed.limits)) {
-    parsed.limits = snakeToCamelObject(parsed.limits as Record<string, unknown>);
+  // Normalize snake_case → camelCase for every object section
+  // before merging, so TOML keys in any natural form
+  // (`l1_interval`, `disable_system_memory`,
+  // `circuit_breaker_writes_per_interval`...) actually override
+  // the camelCase TypeScript defaults. Prior to v0.2.7 only
+  // [limits] was normalized — the original v0.1.1 fix carved
+  // out a single section because broader normalization was
+  // considered too risky. The risk turned out to be theoretical
+  // (no test depended on snake_case being broken in other
+  // sections), and the bug was a real silent override failure
+  // affecting any operator who copied the natural TOML form
+  // from documentation. The full normalization ships in v0.2.7.
+  for (const [sectionKey, sectionVal] of Object.entries(parsed)) {
+    if (
+      sectionVal !== null &&
+      typeof sectionVal === 'object' &&
+      !Array.isArray(sectionVal)
+    ) {
+      parsed[sectionKey] = snakeToCamelObject(sectionVal as Record<string, unknown>);
+    }
   }
 
   return deepMerge(defaults as unknown as Record<string, unknown>, parsed) as unknown as AletheiaSettings;
