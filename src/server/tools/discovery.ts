@@ -6,7 +6,8 @@ import { searchMemory, readMemory } from '../../db/queries/memory.js';
 import { listTags, getRelatedEntries } from '../../db/queries/tags.js';
 import { readHandoff } from '../../db/queries/handoff.js';
 import { readStatus } from '../../db/queries/status.js';
-import { formatError, xmlEscape } from '../../lib/errors.js';
+import { xmlEscape } from '../../lib/errors.js';
+import { toolError, toolSuccess } from './response-format.js';
 
 export function registerDiscoveryTools(
   handlers: Record<string, ToolHandler>,
@@ -56,10 +57,7 @@ export function registerDiscoveryTools(
     const showRelated = args.show_related as boolean | undefined;
 
     if (!entryId) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'entry_id is required') }],
-        isError: true,
-      };
+      return toolError('MISSING_FIELD', 'entry_id is required');
     }
 
     // Detect entry class from entries table
@@ -71,18 +69,12 @@ export function registerDiscoveryTools(
       // Check if it's a handoff key
       const handoffContent = readHandoff(db, { targetKey: entryId });
       if (handoffContent !== null) {
-        return {
-          content: [{
-            type: 'text',
-            text: `<result><handoff target_key="${xmlEscape(entryId)}" consumed="true"><content>${xmlEscape(handoffContent)}</content></handoff></result>`,
-          }],
-        };
+        return toolSuccess(
+          `<result><handoff target_key="${xmlEscape(entryId)}" consumed="true"><content>${xmlEscape(handoffContent)}</content></handoff></result>`,
+        );
       }
 
-      return {
-        content: [{ type: 'text', text: formatError('NOT_FOUND', `Entry ${entryId} not found`) }],
-        isError: true,
-      };
+      return toolError('NOT_FOUND', `Entry ${entryId} not found`);
     }
 
     let xml = '<result>';
@@ -126,10 +118,7 @@ export function registerDiscoveryTools(
       // so callers can treat `read` as a uniform entry-type fetcher.
       const statusResult = readStatus(db, { entryId });
       if (!statusResult) {
-        return {
-          content: [{ type: 'text', text: formatError('NOT_FOUND', `Status document for entry ${entryId} not found`) }],
-          isError: true,
-        };
+        return toolError('NOT_FOUND', `Status document for entry ${entryId} not found`);
       }
       const sectionsXml = statusResult.sections
         .map(
