@@ -7,21 +7,42 @@ import {
   restoreDatabase,
   verifyDatabase,
 } from './backup.js';
+import { VERSION } from '../lib/version.js';
 
 const command = process.argv[2];
 const args = process.argv.slice(3);
 
 function printUsage(): void {
+  console.error(`aletheia ${VERSION}`);
   console.error('Usage: aletheia <subcommand>');
   console.error('  setup                    Install Aletheia memory system');
   console.error('  teardown                 Remove Aletheia registrations');
   console.error('  backup [path]            Online backup of live database');
   console.error('  restore <path>           Restore live database from backup');
   console.error('  verify [path]            Verify integrity of database file');
+  console.error('  --version, -v            Print version and exit');
+  console.error('  --help, -h               Print this usage and exit');
 }
 
 async function main(): Promise<void> {
   switch (command) {
+    // Round-4 fix: CEO's pre-install sandbox test surfaced that
+    // `aletheia --version` exited 1 because no flag handler
+    // existed. Print just the bare version to stdout (so
+    // `aletheia --version | cut -d' ' -f2` works in scripts) and
+    // exit 0. -v is the conventional short form.
+    case '--version':
+    case '-v':
+    case 'version':
+      console.log(VERSION);
+      return;
+
+    case '--help':
+    case '-h':
+    case 'help':
+      printUsage();
+      return;
+
     case 'setup':
       await setup();
       return;
