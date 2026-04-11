@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import crypto from 'crypto';
 import { DEFAULTS } from '../../lib/constants.js';
+import { buildSearchPredicate } from './search-predicate.js';
 
 export function appendJournalEntry(
   db: Database.Database,
@@ -163,8 +164,11 @@ export function searchJournal(
   }
 
   if (params.query) {
-    conditions.push('j.content LIKE ?');
-    bindings.push(`%${params.query}%`);
+    // Bug C (v0.2.1): tokenize multi-word queries symmetrically with
+    // searchMemory. See search-predicate.ts for rationale.
+    const pred = buildSearchPredicate(params.query, ['j.content']);
+    conditions.push(pred.sql);
+    bindings.push(...pred.bindings);
   }
 
   let joinClause = '';

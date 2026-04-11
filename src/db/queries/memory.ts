@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { buildSearchPredicate } from './search-predicate.js';
 import crypto from 'crypto';
 
 export function writeMemory(
@@ -182,8 +183,13 @@ export function searchMemory(
   }
 
   if (params.query) {
-    conditions.push('(m.key LIKE ? OR m.value LIKE ?)');
-    bindings.push(`%${params.query}%`, `%${params.query}%`);
+    // Bug C (v0.2.1): tokenize multi-word queries so descriptive
+    // phrases like "load the bootstrap info" match a memory named
+    // "bootstrap-info". Single-word queries still behave identically
+    // because buildSearchPredicate always includes the literal phrase.
+    const pred = buildSearchPredicate(params.query, ['m.key', 'm.value']);
+    conditions.push(pred.sql);
+    bindings.push(...pred.bindings);
   }
 
   let joinClause = '';
