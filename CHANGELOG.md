@@ -2,6 +2,54 @@
 
 All notable changes to Aletheia are documented in this file.
 
+## v0.2.2 — 2026-04-11
+
+Second patch release on top of v0.2.0 (same day as v0.2.1). Bundles
+Bug C, an `aletheia verify` enhancement, and one incremental step of
+the #31 migration.
+
+### Fixed
+
+- **Bug C — `search` false-negative on descriptive-phrase queries.**
+  Task templates reference memories with English phrases like
+  "load the bootstrap info" but `search` compared the whole phrase
+  against column contents via a single `LIKE '%phrase%'`, so a
+  concisely-named memory `bootstrap-info` never matched even when
+  the target was obvious. New `buildSearchPredicate(query, columns)`
+  helper in `src/db/queries/search-predicate.ts` produces a
+  `(col LIKE ? OR col LIKE ? ...)` fragment matching both the
+  literal phrase AND each meaningful token (length >= 3, stop-word
+  filtered). Both `searchMemory` and `searchJournal` now use it.
+  Single-word queries still behave identically.
+
+### Added
+
+- **`aletheia verify` now flags schema-version drift.** Prior
+  behavior returned the observed schema version without comparing
+  against what this build expects — a stale backup passed silently,
+  and a future-schema backup passed too (which would let a restore
+  overwrite a live db this binary can't understand). The verify
+  result now includes `expectedSchemaVersion`, `needsMigration`
+  (soft, auto-migrate on next server startup), and `fromFuture`
+  (hard fail, `ok=false`). CLI output surfaces both signals. New
+  `CURRENT_SCHEMA_VERSION` constant exported from `db/schema.ts`
+  gives a single source of truth for "what schema does this build
+  target".
+
+### Changed
+
+- **Item #31 — incremental migration.** `src/server/tools/entries.ts`
+  migrated from `formatError` to `toolError` / `toolSuccess` from
+  `response-format.ts`. Six tool modules remain on the legacy
+  pattern (auth.ts, discovery.ts, handoff.ts, journal.ts, memory.ts,
+  system.ts); each will migrate in its own follow-up commit.
+
+### Test infrastructure
+
+- **38 tests total**, all green. v0.2.2 added 7 new cases across
+  `test/search-tokenization.test.mjs` (5) and expanded
+  `test/backup-restore.test.mjs` with two schema-drift cases.
+
 ## v0.2.1 — 2026-04-11
 
 Patch release on top of v0.2.0. Three targeted bug fixes found via
