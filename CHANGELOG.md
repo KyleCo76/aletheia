@@ -2,6 +2,35 @@
 
 All notable changes to Aletheia are documented in this file.
 
+## v0.2.6 — 2026-04-11
+
+Sixth same-day patch release. One real bug fix from the P3 leg
+of the round-3 sweep.
+
+### Fixed
+
+- **Injection builders halted on the first oversized item.**
+  `l1-builder.ts` and `l2-builder.ts` iterate candidate
+  memories / journal entries in recency order and used `break`
+  when an item exceeded the remaining token budget — meaning
+  a single item larger than the budget would halt the loop and
+  prevent every subsequent (older, smaller) item from being
+  injected. Combined with the recency-first sort this was the
+  worst possible heuristic: the freshest memory is typically
+  the largest one, so a fat fresh memory blocked dozens of
+  small older memories that would have fit in its slot.
+  Sessions saw far less context than they should have. Fix:
+  `break` → `continue` in all three sites (L1 memory loop, L2
+  memory loop, L2 journal loop). Oversized items get skipped
+  silently, smaller subsequent items still get the budget.
+  Output is now always a superset of pre-fix output.
+
+### Test infrastructure
+
+- **74 tests total**, all green. v0.2.6 added 3 new cases in
+  `test/injection-budget-skip.test.mjs` covering both builders
+  and the journal loop.
+
 ## v0.2.5 — 2026-04-11
 
 Fifth same-day patch release. Two real bug fixes from the round-3
