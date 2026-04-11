@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
 import { appendJournalEntry } from '../../db/queries/journal.js';
-import { addTags, getRelatedEntries } from '../../db/queries/tags.js';
+import { addTags, getEntryTags, getRelatedEntries } from '../../db/queries/tags.js';
 import { formatError, xmlEscape, validateContentSize } from '../../lib/errors.js';
 import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
 import crypto from 'crypto';
@@ -115,8 +115,16 @@ export function registerJournalTools(
       let xml = `<result><journal_entry id="${result.journalId}" created_at="${result.createdAt}" critical="true"/>`;
       xml += `<memory_entry id="${result.memoryId}" version_id="${result.versionId}"/>`;
 
+      // Bug A: echo the COMPLETE current tag set on the entry after
+      // the write, not just the submitted ones. A tag the caller
+      // submitted that was already attached to the entry would
+      // otherwise appear to have "dropped" even though it is in fact
+      // persisted.
       if (tags && tags.length > 0) {
-        xml += `<tags>${tags.map((t) => `<tag>${xmlEscape(t)}</tag>`).join('')}</tags>`;
+        const currentTags = getEntryTags(db, entryId);
+        if (currentTags.length > 0) {
+          xml += `<tags>${currentTags.map((t) => `<tag>${xmlEscape(t)}</tag>`).join('')}</tags>`;
+        }
       }
 
       // Related entries
@@ -144,8 +152,12 @@ export function registerJournalTools(
     let xml = `<result><journal_entry id="${journalResult.id}" created_at="${journalResult.createdAt}"/>`;
 
     if (tagResult) {
-      if (tagResult.addedTags.length > 0) {
-        xml += `<tags>${tagResult.addedTags.map((t) => `<tag>${xmlEscape(t)}</tag>`).join('')}</tags>`;
+      // Bug A: report the full current tag set on the entry rather
+      // than the subset whose junction row was newly inserted. See
+      // the critical-write block above for the full rationale.
+      const currentTags = getEntryTags(db, entryId);
+      if (currentTags.length > 0) {
+        xml += `<tags>${currentTags.map((t) => `<tag>${xmlEscape(t)}</tag>`).join('')}</tags>`;
       }
       if (tagResult.similar.length > 0) {
         xml += `<tags_similar>${tagResult.similar.map((s) => `${xmlEscape(s.existing)} (similar to ${xmlEscape(s.submitted)})`).join(', ')}</tags_similar>`;

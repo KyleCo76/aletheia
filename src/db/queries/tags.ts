@@ -46,6 +46,27 @@ export function addTags(
   }).immediate();
 }
 
+export function getEntryTags(
+  db: Database.Database,
+  entryId: string,
+): string[] {
+  // Return all tag names currently attached to this entry, in
+  // insertion (tags.id) order for deterministic output. Used by the
+  // write_journal / write_memory response builders to echo the
+  // complete post-write tag set — a caller that submits overlapping
+  // or already-attached tags should see the full union rather than a
+  // subset filtered to "newly inserted junction rows".
+  const rows = db.prepare(
+    `SELECT t.name
+     FROM entry_tags et
+     JOIN tags t ON et.tag_id = t.id
+     WHERE et.entry_id = ?
+     ORDER BY t.id`,
+  ).all(entryId) as Array<{ name: string }>;
+
+  return rows.map((r) => r.name);
+}
+
 export function listTags(
   db: Database.Database
 ): Array<{ name: string; count: number }> {

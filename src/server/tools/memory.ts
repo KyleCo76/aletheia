@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
 import { writeMemory, retireMemory, readMemoryHistory } from '../../db/queries/memory.js';
-import { addTags } from '../../db/queries/tags.js';
+import { addTags, getEntryTags } from '../../db/queries/tags.js';
 import { formatError, xmlEscape, validateContentSize } from '../../lib/errors.js';
 import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
 
@@ -75,8 +75,14 @@ export function registerMemoryTools(
     let tagXml = '';
     if (tags && tags.length > 0) {
       const tagResult = addTags(db, { entryId, tags });
-      if (tagResult.addedTags.length > 0) {
-        tagXml = `<tags>${tagResult.addedTags.map((t) => `<tag>${xmlEscape(t)}</tag>`).join('')}</tags>`;
+      // Bug A: echo the full current tag set on the entry after the
+      // write, not just the "newly added" subset that flipped a 0→1
+      // junction row. A caller submitting an overlap with pre-existing
+      // tags must see the union so they can trust the response as a
+      // ground truth for the entry's state.
+      const currentTags = getEntryTags(db, entryId);
+      if (currentTags.length > 0) {
+        tagXml = `<tags>${currentTags.map((t) => `<tag>${xmlEscape(t)}</tag>`).join('')}</tags>`;
       }
       if (tagResult.similar.length > 0) {
         tagXml += `<tags_similar>${tagResult.similar.map((s) => `${xmlEscape(s.existing)} (similar to ${xmlEscape(s.submitted)})`).join(', ')}</tags_similar>`;
