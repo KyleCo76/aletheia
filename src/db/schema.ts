@@ -170,6 +170,14 @@ function runMigration3(db: Database.Database): void {
 
 const migrations: Array<(db: Database.Database) => void> = [runMigration1, runMigration2, runMigration3];
 
+/**
+ * The schema version this build targets. Any database opened by
+ * this build should end up at this version after `runMigrations`.
+ * Exposed as a constant so CLI tools (notably `aletheia verify`)
+ * can distinguish "needs migration" from "newer than this build".
+ */
+export const CURRENT_SCHEMA_VERSION = migrations.length;
+
 export function runMigrations(db: Database.Database): void {
   const currentVersion = getSchemaVersion(db);
 

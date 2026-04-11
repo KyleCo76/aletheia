@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ALETHEIA_HOME, DB_PATH } from '../lib/constants.js';
-import { getSchemaVersion } from '../db/schema.js';
+import { getSchemaVersion, CURRENT_SCHEMA_VERSION } from '../db/schema.js';
 
 export const BACKUPS_DIR = path.join(ALETHEIA_HOME, 'backups');
 
@@ -28,6 +28,24 @@ export interface BackupResult {
 export interface VerifyResult {
   ok: boolean;
   schemaVersion?: number;
+  /**
+   * The schema version this build targets. Compared against
+   * `schemaVersion` to derive `needsMigration` / `fromFuture`.
+   */
+  expectedSchemaVersion?: number;
+  /**
+   * True when the database is behind this build — a backup made by
+   * an older release. The server will auto-migrate on startup, but
+   * operators should be aware before they commit to a restore.
+   */
+  needsMigration?: boolean;
+  /**
+   * True when the database reports a schema version higher than
+   * this build knows about. This is a serious signal: a newer
+   * Aletheia installed the db and this older binary should NOT
+   * restore or open it.
+   */
+  fromFuture?: boolean;
   integrity?: string;
   entryCounts?: Record<string, number>;
   error?: string;
@@ -162,7 +180,33 @@ export async function verifyDatabase(
       };
     }
 
-    return { ok: true, integrity, schemaVersion, entryCounts };
+    // Compare the observed schema version against what this build
+    // expects. A newer db is a hard fail (never overwrite the live
+    // db with one this binary can't understand). An older db is a
+    // soft warning: the server will migrate on startup, but the
+    // operator should see the delta before they commit to the action.
+    const needsMigration = schemaVersion < CURRENT_SCHEMA_VERSION;
+    const fromFuture = schemaVersion > CURRENT_SCHEMA_VERSION;
+    if (fromFuture) {
+      return {
+        ok: false,
+        integrity,
+        schemaVersion,
+        expectedSchemaVersion: CURRENT_SCHEMA_VERSION,
+        fromFuture,
+        error: `database schema version ${schemaVersion} is newer than this build (${CURRENT_SCHEMA_VERSION})`,
+      };
+    }
+
+    return {
+      ok: true,
+      integrity,
+      schemaVersion,
+      expectedSchemaVersion: CURRENT_SCHEMA_VERSION,
+      needsMigration,
+      fromFuture: false,
+      entryCounts,
+    };
   } catch (e: unknown) {
     // Lazy SqliteError surfaces here for non-sqlite files
     // (SQLITE_NOTADB) and any other unexpected db error.

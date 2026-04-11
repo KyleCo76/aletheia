@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-import { runMigrations } from '../dist/db/schema.js';
+import { runMigrations, CURRENT_SCHEMA_VERSION } from '../dist/db/schema.js';
 import {
   backupDatabase,
   restoreDatabase,
@@ -90,8 +90,55 @@ test(
     assert.equal(result.ok, true, `expected ok, got ${result.error}`);
     assert.equal(result.integrity, 'ok');
     assert.ok(result.schemaVersion >= 1, 'schema version should be set');
+    assert.equal(result.expectedSchemaVersion, CURRENT_SCHEMA_VERSION);
+    assert.equal(result.needsMigration, false, 'fresh db should not need migration');
     assert.equal(result.entryCounts.memory, 1);
     assert.equal(result.entryCounts.journal, 2);
+  }),
+);
+
+test(
+  'verifyDatabase flags a db at an older schema version (needsMigration)',
+  withTmp(async (tmp) => {
+    const dbPath = path.join(tmp, 'stale.db');
+    makePopulatedDb(dbPath);
+
+    // Forcibly roll schema_version backwards to simulate a backup
+    // made by an earlier release of Aletheia. The restore path
+    // should accept this — the server migrates on next startup —
+    // but verify should flag needsMigration:true.
+    const db = new Database(dbPath);
+    db.prepare('UPDATE schema_version SET version = ?').run(CURRENT_SCHEMA_VERSION - 1);
+    db.close();
+
+    const result = await verifyDatabase({ path: dbPath });
+    assert.equal(result.ok, true, 'older schema should still verify as ok');
+    assert.equal(result.schemaVersion, CURRENT_SCHEMA_VERSION - 1);
+    assert.equal(result.needsMigration, true);
+    assert.equal(result.fromFuture, false);
+  }),
+);
+
+test(
+  'verifyDatabase rejects a db at a newer schema version (fromFuture)',
+  withTmp(async (tmp) => {
+    const dbPath = path.join(tmp, 'future.db');
+    makePopulatedDb(dbPath);
+
+    // Write a schema_version value this build doesn't know about —
+    // simulates a backup from a newer Aletheia being fed to an
+    // older binary. Must be a hard fail: silently accepting it would
+    // let us overwrite a future-schema live db with something this
+    // binary can't actually read.
+    const db = new Database(dbPath);
+    db.prepare('UPDATE schema_version SET version = ?').run(CURRENT_SCHEMA_VERSION + 5);
+    db.close();
+
+    const result = await verifyDatabase({ path: dbPath });
+    assert.equal(result.ok, false, 'future-schema db must not verify ok');
+    assert.equal(result.fromFuture, true);
+    assert.equal(result.schemaVersion, CURRENT_SCHEMA_VERSION + 5);
+    assert.match(result.error, /newer than this build/);
   }),
 );
 

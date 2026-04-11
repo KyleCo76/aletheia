@@ -61,7 +61,12 @@ async function main(): Promise<void> {
       const label = target ?? 'live database';
       if (result.ok) {
         console.log(`OK: ${label}`);
-        console.log(`  schema version: ${result.schemaVersion}`);
+        console.log(`  schema version: ${result.schemaVersion} (this build expects ${result.expectedSchemaVersion})`);
+        if (result.needsMigration) {
+          console.log(
+            '  NOTE: database is behind this build and will be auto-migrated on next server startup',
+          );
+        }
         console.log(`  integrity:      ${result.integrity}`);
         if (result.entryCounts) {
           for (const [cls, n] of Object.entries(result.entryCounts)) {
@@ -71,6 +76,11 @@ async function main(): Promise<void> {
       } else {
         console.error(`FAIL: ${label}`);
         console.error(`  ${result.error}`);
+        if (result.fromFuture) {
+          console.error(
+            '  This database was written by a newer Aletheia. Do NOT restore it with this binary.',
+          );
+        }
         process.exit(1);
       }
       return;
