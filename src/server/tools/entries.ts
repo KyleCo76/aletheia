@@ -2,7 +2,8 @@ import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
 import { addTags } from '../../db/queries/tags.js';
-import { formatError, xmlEscape } from '../../lib/errors.js';
+import { xmlEscape } from '../../lib/errors.js';
+import { toolError } from './response-format.js';
 import crypto from 'crypto';
 
 const VALID_ENTRY_CLASSES = ['journal', 'memory', 'handoff', 'status'] as const;
@@ -19,10 +20,7 @@ function requireClaim(
 }
 
 function claimError(): { content: Array<{ type: string; text: string }>; isError: boolean } {
-  return {
-    content: [{ type: 'text', text: formatError('NO_CLAIM', 'Use claim(key) to authenticate') }],
-    isError: true,
-  };
+  return toolError('NO_CLAIM', 'Use claim(key) to authenticate');
 }
 
 export function registerEntryTools(
@@ -36,10 +34,7 @@ export function registerEntryTools(
     const tags = args.tags as string[] | undefined;
 
     if (!entryClass || !VALID_ENTRY_CLASSES.includes(entryClass as typeof VALID_ENTRY_CLASSES[number])) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_class must be one of: journal, memory, handoff, status') }],
-        isError: true,
-      };
+      return toolError('INVALID_INPUT', 'entry_class must be one of: journal, memory, handoff, status');
     }
 
     if (settings.permissions.enforce) {
@@ -120,10 +115,7 @@ export function registerEntryTools(
 
     if (entryClass) {
       if (!VALID_ENTRY_CLASSES.includes(entryClass as typeof VALID_ENTRY_CLASSES[number])) {
-        return {
-          content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_class must be one of: journal, memory, handoff, status') }],
-          isError: true,
-        };
+        return toolError('INVALID_INPUT', 'entry_class must be one of: journal, memory, handoff, status');
       }
       conditions.push('entry_class = ?');
       params.push(entryClass);
