@@ -2,6 +2,68 @@
 
 All notable changes to Aletheia are documented in this file.
 
+## v0.2.3 — 2026-04-11
+
+Third same-day patch release. Two real bug fixes caught during the
+Priority-3 investigation, plus completion of the #31 migration
+across every tool module.
+
+### Fixed
+
+- **Latent migration bug — migration3 FAILED on any populated
+  v0.1.0 database.** Discovered while writing a test for
+  v0.1.0 → v0.2.x schema skip handling. Migration 3 rebuilds the
+  entries table via DROP + CREATE + RENAME to widen the
+  entry_class CHECK constraint. With SQLite foreign_keys
+  enabled — which Aletheia turns on at every connection — `DROP
+  TABLE entries` rejects the drop when journal_entries /
+  memory_entries / status_documents / entry_tags hold rows that
+  reference entries.id. The migration therefore worked ONLY on
+  fresh installs with empty tables. Any real v0.1.0 → v0.2.x
+  upgrade with populated data would fail with
+  SQLITE_CONSTRAINT_FOREIGNKEY and leave the database
+  half-migrated. Fix lives at the orchestrator level: runMigrations
+  now captures the prior foreign_keys setting, disables it before
+  the migration loop, runs PRAGMA foreign_key_check after (as a
+  belt-and-braces guard), and restores the setting in a finally
+  block. `PRAGMA defer_foreign_keys` is NOT sufficient — it only
+  defers row-level checks, not DROP TABLE's own up-front guard.
+  Impact: v0.1.0 users with live data have never successfully
+  upgraded. Fresh installers are unaffected.
+
+- **Key rotation mid-session used to fail-OPEN.** Discovered
+  during the Priority-3 "key rotation mid-session" investigation.
+  Once a session called claim(), the validated key was cached in
+  sessionState and never re-checked. A key deleted or downgraded
+  in the db after the claim had no effect on the session — the
+  handler kept exercising the stale cached permission level. An
+  admin revoking a compromised key could not stop an already-
+  claimed session. New `refreshClaim(db, sessionState)` helper at
+  the top of auth.ts re-queries the keys table by id on every
+  privileged call, clears the cache on delete, and refreshes the
+  cache on modification. Coverage is limited to auth.ts handlers
+  (create_key, modify_key, list_keys). Broader coverage for
+  non-auth write handlers is a follow-up.
+
+### Changed
+
+- **Item #31 migration complete.** The remaining four tool
+  modules migrated to `toolError` / `toolSuccess` from
+  `response-format.ts`: handoff.ts, discovery.ts, journal.ts,
+  auth.ts. `system.ts` has no error paths and did not need
+  migration. Status, entries, memory, handoff, discovery,
+  journal, auth — every tool module now uses the typed
+  response-format constructors. Wire format byte-identical.
+  `formatError` remains available in `lib/errors.ts` for the
+  `validateContentSize` helper which still returns pre-formatted
+  text; that edge case is the last legacy caller.
+
+### Test infrastructure
+
+- **44 tests total**, all green. v0.2.3 added 6 new cases across
+  `test/migration-chain-skip.test.mjs` (3) and
+  `test/key-rotation-mid-session.test.mjs` (3).
+
 ## v0.2.2 — 2026-04-11
 
 Second patch release on top of v0.2.0 (same day as v0.2.1). Bundles
