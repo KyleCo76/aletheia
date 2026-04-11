@@ -3,7 +3,8 @@ import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
 import { appendJournalEntry } from '../../db/queries/journal.js';
 import { addTags, getEntryTags, getRelatedEntries } from '../../db/queries/tags.js';
-import { formatError, xmlEscape, validateContentSize } from '../../lib/errors.js';
+import { xmlEscape, validateContentSize } from '../../lib/errors.js';
+import { toolError, toolSuccess } from './response-format.js';
 import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
 import crypto from 'crypto';
 
@@ -25,30 +26,19 @@ export function registerJournalTools(
     const memorySummary = args.memory_summary as string | undefined;
     const skipRelated = args.skip_related as boolean | undefined;
 
-    if (!entryId) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'entry_id is required') }],
-        isError: true,
-      };
-    }
-    if (!content) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'content is required') }],
-        isError: true,
-      };
-    }
+    if (!entryId) return toolError('MISSING_FIELD', 'entry_id is required');
+    if (!content) return toolError('MISSING_FIELD', 'content is required');
 
     const sizeError = validateContentSize(content);
     if (sizeError) {
+      // validateContentSize already formats the error text including
+      // the CONTENT_TOO_LARGE code; wrap it in the expected shape.
       return { content: [{ type: 'text', text: sizeError }], isError: true };
     }
 
     if (critical) {
       if (!memorySummary) {
-        return {
-          content: [{ type: 'text', text: formatError('MISSING_FIELD', 'memory_summary required when critical: true') }],
-          isError: true,
-        };
+        return toolError('MISSING_FIELD', 'memory_summary required when critical: true');
       }
 
       // Circuit breaker check. Prefer the new [limits].critical_write_cap
@@ -58,13 +48,10 @@ export function registerJournalTools(
       const criticalWriteCap =
         settings.limits?.criticalWriteCap ?? settings.digest.criticalWriteCap;
       if (count >= criticalWriteCap) {
-        return {
-          content: [{
-            type: 'text',
-            text: formatError('CIRCUIT_BREAKER', `Critical write cap (${criticalWriteCap}) exceeded. Use standard write_journal instead.`),
-          }],
-          isError: true,
-        };
+        return toolError(
+          'CIRCUIT_BREAKER',
+          `Critical write cap (${criticalWriteCap}) exceeded. Use standard write_journal instead.`,
+        );
       }
 
       // Critical write: single immediate transaction combining all operations
@@ -137,7 +124,7 @@ export function registerJournalTools(
 
       xml += '</result>';
 
-      return { content: [{ type: 'text', text: xml }] };
+      return toolSuccess(xml);
     }
 
     // Standard (non-critical) write
@@ -174,7 +161,7 @@ export function registerJournalTools(
 
     xml += '</result>';
 
-    return { content: [{ type: 'text', text: xml }] };
+    return toolSuccess(xml);
   };
 
   handlers['promote_to_memory'] = (args) => {
@@ -183,24 +170,9 @@ export function registerJournalTools(
     const key = args.key as string | undefined;
     const tags = args.tags as string[] | undefined;
 
-    if (!journalId) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'journal_id is required') }],
-        isError: true,
-      };
-    }
-    if (!synthesizedKnowledge) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'synthesized_knowledge is required') }],
-        isError: true,
-      };
-    }
-    if (!key) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'key is required') }],
-        isError: true,
-      };
-    }
+    if (!journalId) return toolError('MISSING_FIELD', 'journal_id is required');
+    if (!synthesizedKnowledge) return toolError('MISSING_FIELD', 'synthesized_knowledge is required');
+    if (!key) return toolError('MISSING_FIELD', 'key is required');
 
     // Wrap entire promote operation in a single immediate transaction
     const promoteResult = db.transaction(() => {
@@ -274,17 +246,20 @@ export function registerJournalTools(
     }).immediate();
 
     if ('error' in promoteResult) {
-      return {
-        content: [{ type: 'text', text: formatError(promoteResult.error as string, promoteResult.message as string) }],
-        isError: true,
-      };
+      // promoteResult.error is narrowed to the literal 'NOT_FOUND'
+      // from the query layer, but TypeScript's inference through a
+      // db.transaction() callback union loses that narrowing, so
+      // explicitly cast to the known ErrorCode here. Any new error
+      // variants added to the transaction callback must also be
+      // added to ERROR_CODES or this cast breaks at runtime.
+      return toolError(
+        promoteResult.error as 'NOT_FOUND',
+        promoteResult.message as string,
+      );
     }
 
-    return {
-      content: [{
-        type: 'text',
-        text: `<result><memory_entry id="${promoteResult.memoryId}" version_id="${promoteResult.versionId}" key="${xmlEscape(key)}" created="${promoteResult.created}"/><journal_entry id="${xmlEscape(journalId)}" digested="true"/></result>`,
-      }],
-    };
+    return toolSuccess(
+      `<result><memory_entry id="${promoteResult.memoryId}" version_id="${promoteResult.versionId}" key="${xmlEscape(key)}" created="${promoteResult.created}"/><journal_entry id="${xmlEscape(journalId)}" digested="true"/></result>`,
+    );
   };
 }
