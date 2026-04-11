@@ -8,7 +8,9 @@ import {
   canDelegatePermission,
   canDelegateScope,
 } from '../../db/queries/keys.js';
-import { formatError, xmlEscape } from '../../lib/errors.js';
+import { xmlEscape } from '../../lib/errors.js';
+import { toolError, toolSuccess } from './response-format.js';
+import type { ToolErrorResponse, ToolSuccessResponse } from './response-format.js';
 import { KEYS_DIR } from '../../lib/constants.js';
 import fs from 'fs';
 import path from 'path';
@@ -29,11 +31,8 @@ function requireClaim(
   return claimed ?? null;
 }
 
-function claimError(): { content: Array<{ type: string; text: string }>; isError: boolean } {
-  return {
-    content: [{ type: 'text', text: formatError('NO_CLAIM', 'Use claim(key) to authenticate') }],
-    isError: true,
-  };
+function claimError(): ToolErrorResponse {
+  return toolError('NO_CLAIM', 'Use claim(key) to authenticate');
 }
 
 export function registerAuthTools(
@@ -42,22 +41,12 @@ export function registerAuthTools(
   settings: AletheiaSettings,
   sessionState: Map<string, unknown>,
 ): void {
-  handlers['claim'] = (args) => {
+  handlers['claim'] = (args): ToolErrorResponse | ToolSuccessResponse => {
     const keyValue = args.key as string | undefined;
-    if (!keyValue) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'key is required') }],
-        isError: true,
-      };
-    }
+    if (!keyValue) return toolError('INVALID_INPUT', 'key is required');
 
     const result = validateKey(db, { keyValue });
-    if (!result) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_KEY', 'Key not found or invalid') }],
-        isError: true,
-      };
-    }
+    if (!result) return toolError('INVALID_KEY', 'Key not found or invalid');
 
     sessionState.set('claimedKey', result);
     if (result.entryScope) {
@@ -71,50 +60,37 @@ export function registerAuthTools(
       sessionState.set('projectNamespace', result.entryScope);
     }
 
-    return {
-      content: [{
-        type: 'text',
-        text: `<result><id>${result.id}</id><permissions>${result.permissions}</permissions><entry_scope>${xmlEscape(result.entryScope ?? '')}</entry_scope></result>`,
-      }],
-    };
+    return toolSuccess(
+      `<result><id>${result.id}</id><permissions>${result.permissions}</permissions><entry_scope>${xmlEscape(result.entryScope ?? '')}</entry_scope></result>`,
+    );
   };
 
-  handlers['whoami'] = () => {
+  handlers['whoami'] = (): ToolSuccessResponse => {
     const claimed = sessionState.get('claimedKey') as
       | { id: string; permissions: string; entryScope: string | null }
       | undefined;
 
     if (!claimed) {
-      return {
-        content: [{ type: 'text', text: '<result><status>unclaimed</status></result>' }],
-      };
+      return toolSuccess('<result><status>unclaimed</status></result>');
     }
 
-    return {
-      content: [{
-        type: 'text',
-        text: `<result><status>claimed</status><id>${claimed.id}</id><permissions>${claimed.permissions}</permissions><entry_scope>${xmlEscape(claimed.entryScope ?? '')}</entry_scope></result>`,
-      }],
-    };
+    return toolSuccess(
+      `<result><status>claimed</status><id>${claimed.id}</id><permissions>${claimed.permissions}</permissions><entry_scope>${xmlEscape(claimed.entryScope ?? '')}</entry_scope></result>`,
+    );
   };
 
-  handlers['bootstrap'] = (args) => {
+  handlers['bootstrap'] = (args): ToolErrorResponse | ToolSuccessResponse => {
     const name = args.name as string | undefined;
     const enforcePermissions = args.enforce_permissions as boolean | undefined;
 
-    if (!name) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'name is required') }],
-        isError: true,
-      };
-    }
+    if (!name) return toolError('INVALID_INPUT', 'name is required');
 
     // Validate project name to prevent path traversal
     if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'name must contain only letters, numbers, hyphens, and underscores') }],
-        isError: true,
-      };
+      return toolError(
+        'INVALID_INPUT',
+        'name must contain only letters, numbers, hyphens, and underscores',
+      );
     }
 
     // Check if master key file already exists for this project name
@@ -122,16 +98,10 @@ export function registerAuthTools(
 
     // Verify resolved path is under KEYS_DIR (defense in depth)
     if (!path.resolve(keyFilePath).startsWith(path.resolve(KEYS_DIR))) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'Invalid project name') }],
-        isError: true,
-      };
+      return toolError('INVALID_INPUT', 'Invalid project name');
     }
     if (fs.existsSync(keyFilePath)) {
-      return {
-        content: [{ type: 'text', text: formatError('ALREADY_BOOTSTRAPPED', `Project "${name}" has already been bootstrapped`) }],
-        isError: true,
-      };
+      return toolError('ALREADY_BOOTSTRAPPED', `Project "${name}" has already been bootstrapped`);
     }
 
     // Create master key in DB first, then write to filesystem.
@@ -162,24 +132,16 @@ export function registerAuthTools(
     });
     sessionState.set('claimedEntry', name);
 
-    return {
-      content: [{
-        type: 'text',
-        text: `<result><key>${keyResult.keyValue}</key><key_id>${keyResult.id}</key_id><permissions>${keyResult.permissions}</permissions><key_file>${xmlEscape(keyFilePath)}</key_file><project>${xmlEscape(name)}</project></result>`,
-      }],
-    };
+    return toolSuccess(
+      `<result><key>${keyResult.keyValue}</key><key_id>${keyResult.id}</key_id><permissions>${keyResult.permissions}</permissions><key_file>${xmlEscape(keyFilePath)}</key_file><project>${xmlEscape(name)}</project></result>`,
+    );
   };
 
-  handlers['create_key'] = (args) => {
+  handlers['create_key'] = (args): ToolErrorResponse | ToolSuccessResponse => {
     const permissions = args.permissions as string | undefined;
     const entryScope = args.entry_scope as string | undefined;
 
-    if (!permissions) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'permissions is required') }],
-        isError: true,
-      };
-    }
+    if (!permissions) return toolError('INVALID_INPUT', 'permissions is required');
 
     // Look up the caller's claim once up front. The "do you have a
     // claim at all" check is still gated on settings.permissions.enforce
@@ -196,10 +158,10 @@ export function registerAuthTools(
       if (!claimed) return claimError();
 
       if (claimed.permissions !== 'maintenance' && claimed.permissions !== 'create-sub-entries') {
-        return {
-          content: [{ type: 'text', text: formatError('INSUFFICIENT_PERMISSIONS', 'Requires create-sub-entries or maintenance permission') }],
-          isError: true,
-        };
+        return toolError(
+          'INSUFFICIENT_PERMISSIONS',
+          'Requires create-sub-entries or maintenance permission',
+        );
       }
     }
 
@@ -210,31 +172,19 @@ export function registerAuthTools(
     // compare against) still bypass entirely.
     if (claimed) {
       if (!canDelegatePermission(claimed.permissions, permissions)) {
-        return {
-          content: [{
-            type: 'text',
-            text: formatError(
-              'INSUFFICIENT_PERMISSIONS',
-              `Cannot delegate "${permissions}" permission from parent "${claimed.permissions}": child permissions must be a subset of parent`,
-            ),
-          }],
-          isError: true,
-        };
+        return toolError(
+          'INSUFFICIENT_PERMISSIONS',
+          `Cannot delegate "${permissions}" permission from parent "${claimed.permissions}": child permissions must be a subset of parent`,
+        );
       }
 
       if (!canDelegateScope(claimed.entryScope, entryScope)) {
         const childLabel = entryScope ?? 'global';
         const parentLabel = claimed.entryScope ?? 'global';
-        return {
-          content: [{
-            type: 'text',
-            text: formatError(
-              'INSUFFICIENT_PERMISSIONS',
-              `Cannot delegate scope "${childLabel}" from parent scope "${parentLabel}": scoped parents can only delegate their own scope`,
-            ),
-          }],
-          isError: true,
-        };
+        return toolError(
+          'INSUFFICIENT_PERMISSIONS',
+          `Cannot delegate scope "${childLabel}" from parent scope "${parentLabel}": scoped parents can only delegate their own scope`,
+        );
       }
     }
 
@@ -244,31 +194,25 @@ export function registerAuthTools(
       createdBy: claimed?.id,
     });
 
-    return {
-      content: [{
-        type: 'text',
-        text: `<result><id>${result.id}</id><key>${result.keyValue}</key><permissions>${result.permissions}</permissions></result>`,
-      }],
-    };
+    return toolSuccess(
+      `<result><id>${result.id}</id><key>${result.keyValue}</key><permissions>${result.permissions}</permissions></result>`,
+    );
   };
 
-  handlers['modify_key'] = (args) => {
+  handlers['modify_key'] = (args): ToolErrorResponse | ToolSuccessResponse => {
     const keyId = args.key_id as string | undefined;
     const permissions = args.permissions as string | undefined;
 
     if (!keyId || !permissions) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'key_id and permissions are required') }],
-        isError: true,
-      };
+      return toolError('INVALID_INPUT', 'key_id and permissions are required');
     }
 
     const validPermissions = ['read-only', 'read-write', 'create-sub-entries', 'maintenance'];
     if (!validPermissions.includes(permissions)) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', `permissions must be one of: ${validPermissions.join(', ')}`) }],
-        isError: true,
-      };
+      return toolError(
+        'INVALID_INPUT',
+        `permissions must be one of: ${validPermissions.join(', ')}`,
+      );
     }
 
     if (settings.permissions.enforce) {
@@ -285,21 +229,15 @@ export function registerAuthTools(
     const result = modifyKey(db, { keyId, permissions, callerPermissions });
 
     if ('error' in result) {
-      return {
-        content: [{ type: 'text', text: formatError('MODIFY_FAILED', result.error) }],
-        isError: true,
-      };
+      return toolError('MODIFY_FAILED', result.error);
     }
 
-    return {
-      content: [{
-        type: 'text',
-        text: `<result><id>${result.id}</id><permissions>${result.permissions}</permissions></result>`,
-      }],
-    };
+    return toolSuccess(
+      `<result><id>${result.id}</id><permissions>${result.permissions}</permissions></result>`,
+    );
   };
 
-  handlers['list_keys'] = () => {
+  handlers['list_keys'] = (): ToolErrorResponse | ToolSuccessResponse => {
     if (settings.permissions.enforce) {
       const claimed = requireClaim(sessionState, settings);
       if (!claimed) return claimError();
@@ -318,8 +256,6 @@ export function registerAuthTools(
       )
       .join('');
 
-    return {
-      content: [{ type: 'text', text: `<result><keys>${keyXml}</keys></result>` }],
-    };
+    return toolSuccess(`<result><keys>${keyXml}</keys></result>`);
   };
 }
