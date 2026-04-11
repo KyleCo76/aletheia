@@ -2,6 +2,52 @@
 
 All notable changes to Aletheia are documented in this file.
 
+## v0.2.5 — 2026-04-11
+
+Fifth same-day patch release. Two real bug fixes from the round-3
+Priority-3 sweep — both were latent in every shipped release
+through v0.2.4.
+
+### Fixed
+
+- **Circuit breaker bulk-write bypass paths.** Round-3 P2
+  investigation found two stacking holes. (1) `write_journal` /
+  `write_memory` / `create_entry` / `promote_to_memory` accepted
+  unbounded `tags: string[]` arrays; `addTags` inserts 2 rows
+  per tag, so a single tool call counted as 1 write against the
+  breaker but could mutate 200+ rows by stuffing 100 tags.
+  (2) Most mutating handlers were entirely unguarded — only
+  `write_journal`, `write_memory`, and `replace_status` called
+  the breaker. The other seven (`create_entry`,
+  `promote_to_memory`, `retire_memory`, `update_status`,
+  `add_section`, `remove_section`, `create_handoff`) bypassed
+  it completely. A session could mint unlimited entries /
+  retirements / sections / handoffs / promotions without ever
+  tripping the limit. Both bypasses are closed: new
+  `MAX_TAGS_PER_CALL=32` cap + `validateTagCount` helper in
+  `lib/errors.ts`, and `checkGeneralCircuitBreaker` +
+  `recordWrite` applied uniformly to all 10 mutating handlers.
+
+- **Hook scripts waited 2s on stale socket pointers.** Round-3
+  P1 found that `l1-inject.sh`, `l2-inject.sh`,
+  `memory-intercept.sh`, and `startup.sh` discover the MCP
+  server's unix domain socket via pointer files but never
+  checked whether the discovered path actually points at a
+  live socket. When the pointer is stale (MCP server crashed
+  without cleanup, or PID reuse on a long-running workstation),
+  every hook invocation waited the full 2s curl timeout
+  before exiting 0. The hooks fire on PreToolUse and similar
+  fast-path events, so the wait was visible. Fix: add
+  `[ -S "$SOCK" ] || exit 0` immediately after socket
+  discovery in all four scripts. Fail-open semantics
+  preserved.
+
+### Test infrastructure
+
+- **71 tests total**, all green. v0.2.5 added 15 new cases
+  across `test/circuit-breaker-bulk-bypass.test.mjs` (9) and
+  `test/hook-stale-socket.test.mjs` (6).
+
 ## v0.2.4 — 2026-04-11
 
 Fourth same-day patch release. Closes the single biggest
