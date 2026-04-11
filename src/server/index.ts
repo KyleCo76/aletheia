@@ -281,7 +281,7 @@ export async function main(): Promise<void> {
 
   // 4. Create MCP Server instance
   const server = new Server(
-    { name: 'aletheia', version: '0.2.6' },
+    { name: 'aletheia', version: '0.2.7' },
     { capabilities: { tools: {} } },
   );
 

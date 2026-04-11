@@ -2,6 +2,52 @@
 
 All notable changes to Aletheia are documented in this file.
 
+## v0.2.7 — 2026-04-11
+
+Seventh same-day patch release. Round-4 fresh-discovery sweep
+landed two real fixes plus a defensive test pinning the
+handoff read-once invariant.
+
+### Added
+
+- **`aletheia --version`, `-v`, `version` (subcommand) and
+  `--help`, `-h`, `help`.** CEO's pre-install sandbox test of
+  the v0.2.x tarball found `aletheia --version` returned
+  exit 1 because the CLI dispatcher had no flag handler at
+  all. Standard CLI hygiene says `--version` should print the
+  version and exit 0; the absence broke automated install
+  scripts and version-pinning tooling. New `src/lib/version.ts`
+  exports a single `VERSION` constant; `cli.ts` handles all
+  five flag forms with exit 0. Usage banner now includes the
+  version line. Drift between `cli.ts` and `package.json` is
+  guarded by a regression test.
+
+### Fixed
+
+- **Settings.toml snake_case keys silently failed in every
+  section except [limits].** Latent bug since v0.1.1 — the
+  original snake_case → camelCase normalization fix carved
+  out [limits] only and explicitly deferred broader coverage
+  ("would require wider testing"). The "wider testing" risk
+  turned out to be theoretical; no test depended on
+  snake_case being broken in other sections. Operators who
+  copied the natural TOML form (e.g. `l1_interval = 5` under
+  [injection]) saw their override silently dropped because
+  deepMerge copied the snake_case key verbatim, leaving the
+  camelCase default untouched. Fix: hoist the normalization
+  out of the [limits]-only conditional and run it on every
+  object section in the parsed TOML root. Camel-case keys
+  continue to work; existing [limits] behavior preserved.
+
+### Test infrastructure
+
+- **94 tests total**, all green. v0.2.7 added 20 new cases
+  across `test/cli-version.test.mjs` (8),
+  `test/settings-snake-case.test.mjs` (6), and
+  `test/handoff-read-once.test.mjs` (6 — defensive pin of
+  the BEGIN-IMMEDIATE-protected read-once invariant; no fix
+  needed because the existing query was already correct).
+
 ## v0.2.6 — 2026-04-11
 
 Sixth same-day patch release. One real bug fix from the P3 leg
