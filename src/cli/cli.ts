@@ -2,19 +2,87 @@
 
 import { setup } from './setup.js';
 import { teardown } from './teardown.js';
+import {
+  backupDatabase,
+  restoreDatabase,
+  verifyDatabase,
+} from './backup.js';
 
 const command = process.argv[2];
+const args = process.argv.slice(3);
 
-switch (command) {
-  case 'setup':
-    setup().catch(err => { console.error('Setup failed:', err); process.exit(1); });
-    break;
-  case 'teardown':
-    teardown().catch(err => { console.error('Teardown failed:', err); process.exit(1); });
-    break;
-  default:
-    console.error('Usage: aletheia <setup|teardown>');
-    console.error('  setup     - Install Aletheia memory system');
-    console.error('  teardown  - Remove Aletheia registrations');
-    process.exit(1);
+function printUsage(): void {
+  console.error('Usage: aletheia <subcommand>');
+  console.error('  setup                    Install Aletheia memory system');
+  console.error('  teardown                 Remove Aletheia registrations');
+  console.error('  backup [path]            Online backup of live database');
+  console.error('  restore <path>           Restore live database from backup');
+  console.error('  verify [path]            Verify integrity of database file');
 }
+
+async function main(): Promise<void> {
+  switch (command) {
+    case 'setup':
+      await setup();
+      return;
+
+    case 'teardown':
+      await teardown();
+      return;
+
+    case 'backup': {
+      const targetPath = args[0]; // optional positional override
+      const result = await backupDatabase({ targetPath });
+      console.log(`Backup written: ${result.path}`);
+      console.log(`  size: ${result.bytes} bytes`);
+      return;
+    }
+
+    case 'restore': {
+      const sourcePath = args[0];
+      if (!sourcePath) {
+        console.error('Usage: aletheia restore <path-to-backup>');
+        process.exit(1);
+      }
+      const result = await restoreDatabase({ sourcePath });
+      console.log(`Restored from ${sourcePath}`);
+      console.log(`  target:         ${result.path}`);
+      console.log(`  schema version: ${result.restoredFromSchema}`);
+      if (result.safetyBackupPath) {
+        console.log(`  safety backup:  ${result.safetyBackupPath}`);
+        console.log('  (use `aletheia restore <safety backup>` to roll back)');
+      }
+      return;
+    }
+
+    case 'verify': {
+      const target = args[0]; // optional path; defaults to live db
+      const result = await verifyDatabase({ path: target });
+      const label = target ?? 'live database';
+      if (result.ok) {
+        console.log(`OK: ${label}`);
+        console.log(`  schema version: ${result.schemaVersion}`);
+        console.log(`  integrity:      ${result.integrity}`);
+        if (result.entryCounts) {
+          for (const [cls, n] of Object.entries(result.entryCounts)) {
+            console.log(`  ${cls}: ${n}`);
+          }
+        }
+      } else {
+        console.error(`FAIL: ${label}`);
+        console.error(`  ${result.error}`);
+        process.exit(1);
+      }
+      return;
+    }
+
+    default:
+      printUsage();
+      process.exit(1);
+  }
+}
+
+main().catch((err: Error) => {
+  console.error(`aletheia: ${err.message}`);
+  process.exit(1);
+});
