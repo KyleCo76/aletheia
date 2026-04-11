@@ -98,6 +98,12 @@ export function registerStatusTools(
     const authErr = claimGuard(db, sessionState, settings);
     if (authErr) return authErr;
 
+    // Round-3 fix: status section update is a write but was
+    // not subject to the breaker in v0.2.4 — only replace_status
+    // was. Apply uniformly.
+    const cbCheck = checkGeneralCircuitBreaker(sessionState, settings);
+    if (cbCheck.blocked) return cbCheck.response;
+
     const entryId = args.entry_id as string | undefined;
     const sectionId = args.section_id as string | undefined;
     const state = args.state as string | undefined;
@@ -157,6 +163,8 @@ export function registerStatusTools(
       }
     }
 
+    recordWrite(sessionState);
+
     return {
       content: [{
         type: 'text',
@@ -169,6 +177,11 @@ export function registerStatusTools(
     // Fail-closed on revoked-mid-session key (round-2 fix).
     const authErr = claimGuard(db, sessionState, settings);
     if (authErr) return authErr;
+
+    // Round-3 fix: add_section is a row-INSERT but was unguarded
+    // in v0.2.4. Apply breaker.
+    const cbCheck = checkGeneralCircuitBreaker(sessionState, settings);
+    if (cbCheck.blocked) return cbCheck.response;
 
     const entryId = args.entry_id as string | undefined;
     const sectionId = args.section_id as string | undefined;
@@ -188,6 +201,7 @@ export function registerStatusTools(
     }
 
     addSection(db, { statusId: doc.id, sectionId, content, position });
+    recordWrite(sessionState);
 
     return {
       content: [{
@@ -201,6 +215,11 @@ export function registerStatusTools(
     // Fail-closed on revoked-mid-session key (round-2 fix).
     const authErr = claimGuard(db, sessionState, settings);
     if (authErr) return authErr;
+
+    // Round-3 fix: remove_section is a row-DELETE but was
+    // unguarded in v0.2.4. Apply breaker for symmetry.
+    const cbCheck = checkGeneralCircuitBreaker(sessionState, settings);
+    if (cbCheck.blocked) return cbCheck.response;
 
     const entryId = args.entry_id as string | undefined;
     const sectionId = args.section_id as string | undefined;
@@ -218,6 +237,7 @@ export function registerStatusTools(
     }
 
     removeSection(db, { statusId: doc.id, sectionId });
+    recordWrite(sessionState);
 
     return {
       content: [{

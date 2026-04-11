@@ -5,6 +5,7 @@ import { claimGuard } from './auth.js';
 import { createHandoff, readHandoff } from '../../db/queries/handoff.js';
 import { xmlEscape } from '../../lib/errors.js';
 import { toolError, toolSuccess } from './response-format.js';
+import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
 
 export function registerHandoffTools(
   handlers: Record<string, ToolHandler>,
@@ -16,6 +17,12 @@ export function registerHandoffTools(
     // Fail-closed on revoked-mid-session key (round-2 fix).
     const authErr = claimGuard(db, sessionState, settings);
     if (authErr) return authErr;
+
+    // Round-3 fix: create_handoff was not subject to the
+    // circuit breaker in v0.2.4. INSERT OR REPLACE on the
+    // handoffs table is a write — apply the breaker uniformly.
+    const cbCheck = checkGeneralCircuitBreaker(sessionState, settings);
+    if (cbCheck.blocked) return cbCheck.response;
 
     const targetKey = args.target_key as string | undefined;
     const content = args.content as string | undefined;
@@ -35,6 +42,7 @@ export function registerHandoffTools(
       tags,
       createdBy: claimed?.id,
     });
+    recordWrite(sessionState);
 
     return toolSuccess(
       `<result><handoff target_key="${xmlEscape(targetKey)}">created</handoff></result>`,

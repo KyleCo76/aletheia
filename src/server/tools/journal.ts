@@ -4,7 +4,7 @@ import type { ToolHandler } from './auth.js';
 import { claimGuard } from './auth.js';
 import { appendJournalEntry } from '../../db/queries/journal.js';
 import { addTags, getEntryTags, getRelatedEntries } from '../../db/queries/tags.js';
-import { xmlEscape, validateContentSize } from '../../lib/errors.js';
+import { xmlEscape, validateContentSize, validateTagCount } from '../../lib/errors.js';
 import { toolError, toolSuccess } from './response-format.js';
 import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
 import crypto from 'crypto';
@@ -36,6 +36,12 @@ export function registerJournalTools(
 
     const sizeError = validateContentSize(content);
     if (sizeError) return toolError(sizeError.code, sizeError.message);
+
+    // Round-3 fix: cap tag-array length to prevent breaker bypass
+    // via tag bombing (each tag = 2 row inserts inside one
+    // breaker-counted call).
+    const tagErr = validateTagCount(tags);
+    if (tagErr) return toolError(tagErr.code, tagErr.message);
 
     if (critical) {
       if (!memorySummary) {
@@ -170,6 +176,16 @@ export function registerJournalTools(
     const authErr = claimGuard(db, sessionState, settings);
     if (authErr) return authErr;
 
+    // Round-3 fix: promote_to_memory was not protected by the
+    // circuit breaker in v0.2.4. Each call inserts memory_entries
+    // + memory_versions (or UPDATE) + memory_journal_provenance
+    // + UPDATE journal_entries.digested_at + N tag pairs. That's
+    // ~4 base mutations regardless of tags, plus 2N for tags. The
+    // breaker now charges this as 1 call and the tag-count cap
+    // bounds the multiplier.
+    const cbCheck = checkGeneralCircuitBreaker(sessionState, settings);
+    if (cbCheck.blocked) return cbCheck.response;
+
     const journalId = args.journal_id as string | undefined;
     const synthesizedKnowledge = args.synthesized_knowledge as string | undefined;
     const key = args.key as string | undefined;
@@ -178,6 +194,10 @@ export function registerJournalTools(
     if (!journalId) return toolError('MISSING_FIELD', 'journal_id is required');
     if (!synthesizedKnowledge) return toolError('MISSING_FIELD', 'synthesized_knowledge is required');
     if (!key) return toolError('MISSING_FIELD', 'key is required');
+
+    // Round-3 fix: tag-count cap.
+    const tagErr = validateTagCount(tags);
+    if (tagErr) return toolError(tagErr.code, tagErr.message);
 
     // Wrap entire promote operation in a single immediate transaction
     const promoteResult = db.transaction(() => {
@@ -262,6 +282,8 @@ export function registerJournalTools(
         promoteResult.message as string,
       );
     }
+
+    recordWrite(sessionState);
 
     return toolSuccess(
       `<result><memory_entry id="${promoteResult.memoryId}" version_id="${promoteResult.versionId}" key="${xmlEscape(key)}" created="${promoteResult.created}"/><journal_entry id="${xmlEscape(journalId)}" digested="true"/></result>`,

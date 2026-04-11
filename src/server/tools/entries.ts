@@ -3,8 +3,9 @@ import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
 import { claimGuard } from './auth.js';
 import { addTags } from '../../db/queries/tags.js';
-import { xmlEscape } from '../../lib/errors.js';
+import { xmlEscape, validateTagCount } from '../../lib/errors.js';
 import { toolError } from './response-format.js';
+import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
 import crypto from 'crypto';
 
 const VALID_ENTRY_CLASSES = ['journal', 'memory', 'handoff', 'status'] as const;
@@ -17,11 +18,16 @@ export function registerEntryTools(
 ): void {
   handlers['create_entry'] = (args) => {
     // Fail-closed on revoked-mid-session key (round-2 fix).
-    // Replaces the local requireClaim helper which did not
-    // re-validate against the db, so a revoked key could still
-    // mint new entries.
     const authErr = claimGuard(db, sessionState, settings);
     if (authErr) return authErr;
+
+    // Round-3 fix: create_entry was not protected by the
+    // circuit breaker at all in v0.2.4 — a session could mint
+    // unlimited entries, each potentially insert-bombing 2N tag
+    // rows via the tag array. Now subject to the same breaker
+    // + tag-count cap as the write_* handlers.
+    const cbCheck = checkGeneralCircuitBreaker(sessionState, settings);
+    if (cbCheck.blocked) return cbCheck.response;
 
     const entryClass = args.entry_class as string | undefined;
     const tags = args.tags as string[] | undefined;
@@ -29,6 +35,9 @@ export function registerEntryTools(
     if (!entryClass || !VALID_ENTRY_CLASSES.includes(entryClass as typeof VALID_ENTRY_CLASSES[number])) {
       return toolError('INVALID_INPUT', 'entry_class must be one of: journal, memory, handoff, status');
     }
+
+    const tagErr = validateTagCount(tags);
+    if (tagErr) return toolError(tagErr.code, tagErr.message);
 
     // Check for project namespace; in simple mode, default to 'default'
     let projectNamespace = sessionState.get('projectNamespace') as string | undefined;
@@ -66,6 +75,8 @@ export function registerEntryTools(
     if (tags && tags.length > 0) {
       tagResult = addTags(db, { entryId, tags });
     }
+
+    recordWrite(sessionState);
 
     let responseXml = `<result><entry_id>${entryId}</entry_id><entry_class>${entryClass}</entry_class><project>${projectNamespace}</project>`;
 

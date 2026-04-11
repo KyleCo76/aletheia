@@ -4,7 +4,7 @@ import type { ToolHandler } from './auth.js';
 import { claimGuard } from './auth.js';
 import { writeMemory, retireMemory, readMemoryHistory } from '../../db/queries/memory.js';
 import { addTags, getEntryTags } from '../../db/queries/tags.js';
-import { xmlEscape, validateContentSize } from '../../lib/errors.js';
+import { xmlEscape, validateContentSize, validateTagCount } from '../../lib/errors.js';
 import { toolError, toolSuccess } from './response-format.js';
 import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
 
@@ -35,6 +35,10 @@ export function registerMemoryTools(
 
     const sizeError = validateContentSize(value, 'value');
     if (sizeError) return toolError(sizeError.code, sizeError.message);
+
+    // Round-3 fix: tag-count cap.
+    const tagErr = validateTagCount(tags);
+    if (tagErr) return toolError(tagErr.code, tagErr.message);
 
     const result = writeMemory(db, {
       entryId,
@@ -82,6 +86,13 @@ export function registerMemoryTools(
     const authErr = claimGuard(db, sessionState, settings);
     if (authErr) return authErr;
 
+    // Round-3 fix: retire_memory was not subject to the breaker
+    // in v0.2.4. A retired memory is still a write (UPDATE
+    // archived_at), and unbounded retirements could be used as
+    // a tombstone-flooding attack on the index.
+    const cbCheck = checkGeneralCircuitBreaker(sessionState, settings);
+    if (cbCheck.blocked) return cbCheck.response;
+
     const entryId = args.entry_id as string | undefined;
     const memoryEntryId = args.memory_entry_id as string | undefined;
     const reason = args.reason as string | undefined;
@@ -90,6 +101,7 @@ export function registerMemoryTools(
     if (!memoryEntryId) return toolError('MISSING_FIELD', 'memory_entry_id is required');
 
     retireMemory(db, { entryId, memoryEntryId, reason });
+    recordWrite(sessionState);
 
     return toolSuccess(
       `<result><retired id="${xmlEscape(memoryEntryId)}" entry_id="${xmlEscape(entryId)}"/></result>`,
