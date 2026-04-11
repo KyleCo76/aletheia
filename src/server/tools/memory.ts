@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
+import { claimGuard } from './auth.js';
 import { writeMemory, retireMemory, readMemoryHistory } from '../../db/queries/memory.js';
 import { addTags, getEntryTags } from '../../db/queries/tags.js';
 import { xmlEscape, validateContentSize } from '../../lib/errors.js';
@@ -14,6 +15,10 @@ export function registerMemoryTools(
   sessionState: Map<string, unknown>,
 ): void {
   handlers['write_memory'] = (args) => {
+    // Fail-closed on revoked-mid-session key (round-2 fix).
+    const authErr = claimGuard(db, sessionState, settings);
+    if (authErr) return authErr;
+
     // General circuit breaker check
     const cbCheck = checkGeneralCircuitBreaker(sessionState, settings);
     if (cbCheck.blocked) return cbCheck.response;
@@ -78,6 +83,10 @@ export function registerMemoryTools(
   };
 
   handlers['retire_memory'] = (args) => {
+    // Fail-closed on revoked-mid-session key (round-2 fix).
+    const authErr = claimGuard(db, sessionState, settings);
+    if (authErr) return authErr;
+
     const entryId = args.entry_id as string | undefined;
     const memoryEntryId = args.memory_entry_id as string | undefined;
     const reason = args.reason as string | undefined;

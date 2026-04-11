@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
+import { claimGuard } from './auth.js';
 import {
   readStatus,
   replaceStatus,
@@ -47,6 +48,10 @@ export function registerStatusTools(
   };
 
   handlers['replace_status'] = (args) => {
+    // Fail-closed on revoked-mid-session key (round-2 fix).
+    const authErr = claimGuard(db, sessionState, settings);
+    if (authErr) return authErr;
+
     // General circuit breaker check
     const cbCheck = checkGeneralCircuitBreaker(sessionState, settings);
     if (cbCheck.blocked) return cbCheck.response;
@@ -91,6 +96,10 @@ export function registerStatusTools(
   };
 
   handlers['update_status'] = (args) => {
+    // Fail-closed on revoked-mid-session key (round-2 fix).
+    const authErr = claimGuard(db, sessionState, settings);
+    if (authErr) return authErr;
+
     const entryId = args.entry_id as string | undefined;
     const sectionId = args.section_id as string | undefined;
     const state = args.state as string | undefined;
@@ -159,6 +168,10 @@ export function registerStatusTools(
   };
 
   handlers['add_section'] = (args) => {
+    // Fail-closed on revoked-mid-session key (round-2 fix).
+    const authErr = claimGuard(db, sessionState, settings);
+    if (authErr) return authErr;
+
     const entryId = args.entry_id as string | undefined;
     const sectionId = args.section_id as string | undefined;
     const content = args.content as string | undefined;
@@ -187,6 +200,10 @@ export function registerStatusTools(
   };
 
   handlers['remove_section'] = (args) => {
+    // Fail-closed on revoked-mid-session key (round-2 fix).
+    const authErr = claimGuard(db, sessionState, settings);
+    if (authErr) return authErr;
+
     const entryId = args.entry_id as string | undefined;
     const sectionId = args.section_id as string | undefined;
 

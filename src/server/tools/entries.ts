@@ -1,27 +1,13 @@
 import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
+import { claimGuard } from './auth.js';
 import { addTags } from '../../db/queries/tags.js';
 import { xmlEscape } from '../../lib/errors.js';
 import { toolError } from './response-format.js';
 import crypto from 'crypto';
 
 const VALID_ENTRY_CLASSES = ['journal', 'memory', 'handoff', 'status'] as const;
-
-function requireClaim(
-  sessionState: Map<string, unknown>,
-  settings: AletheiaSettings,
-): { id: string; permissions: string; entryScope: string | null } | null {
-  if (!settings.permissions.enforce) return null;
-  const claimed = sessionState.get('claimedKey') as
-    | { id: string; permissions: string; entryScope: string | null }
-    | undefined;
-  return claimed ?? null;
-}
-
-function claimError(): { content: Array<{ type: string; text: string }>; isError: boolean } {
-  return toolError('NO_CLAIM', 'Use claim(key) to authenticate');
-}
 
 export function registerEntryTools(
   handlers: Record<string, ToolHandler>,
@@ -30,16 +16,18 @@ export function registerEntryTools(
   sessionState: Map<string, unknown>,
 ): void {
   handlers['create_entry'] = (args) => {
+    // Fail-closed on revoked-mid-session key (round-2 fix).
+    // Replaces the local requireClaim helper which did not
+    // re-validate against the db, so a revoked key could still
+    // mint new entries.
+    const authErr = claimGuard(db, sessionState, settings);
+    if (authErr) return authErr;
+
     const entryClass = args.entry_class as string | undefined;
     const tags = args.tags as string[] | undefined;
 
     if (!entryClass || !VALID_ENTRY_CLASSES.includes(entryClass as typeof VALID_ENTRY_CLASSES[number])) {
       return toolError('INVALID_INPUT', 'entry_class must be one of: journal, memory, handoff, status');
-    }
-
-    if (settings.permissions.enforce) {
-      const claimed = requireClaim(sessionState, settings);
-      if (!claimed) return claimError();
     }
 
     // Check for project namespace; in simple mode, default to 'default'
@@ -101,13 +89,14 @@ export function registerEntryTools(
   };
 
   handlers['list_entries'] = (args) => {
+    // list_entries is a read, but it previously required a claim
+    // so keep parity. claimGuard also refreshes stale caches as a
+    // side effect.
+    const authErr = claimGuard(db, sessionState, settings);
+    if (authErr) return authErr;
+
     const entryClass = args.entry_class as string | undefined;
     const tags = args.tags as string[] | undefined;
-
-    if (settings.permissions.enforce) {
-      const claimed = requireClaim(sessionState, settings);
-      if (!claimed) return claimError();
-    }
 
     let query = 'SELECT id, entry_class, project_namespace, created_by_key, created_at FROM entries';
     const conditions: string[] = [];

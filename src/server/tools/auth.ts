@@ -37,7 +37,7 @@ export type ToolHandler = (args: Record<string, unknown>) => {
  * (write_journal, write_memory, etc.) is a follow-up — they
  * don't currently call requireClaim at all.
  */
-function refreshClaim(
+export function refreshClaim(
   db: Database.Database,
   sessionState: Map<string, unknown>,
 ): { id: string; permissions: string; entryScope: string | null } | null {
@@ -77,6 +77,36 @@ function requireClaim(
 ): { id: string; permissions: string; entryScope: string | null } | null {
   if (!settings.permissions.enforce) return null;
   return refreshClaim(db, sessionState);
+}
+
+/**
+ * Guard helper for non-auth tool handlers (write_journal,
+ * write_memory, replace_status, etc.) that previously trusted
+ * whatever was in sessionState.claimedKey without ever
+ * re-validating against the db. Returns a `ToolErrorResponse` to
+ * return directly when the refreshed claim fails, or `null` when
+ * the call may proceed.
+ *
+ * In dev mode (enforce=false) this is a no-op — write handlers
+ * continue to accept unclaimed callers because enforce mode is
+ * the opt-in for authorization. The fix here targets the
+ * enforce-mode fail-open: a key revoked mid-session used to
+ * keep writing because no handler re-checked the keys table
+ * between the original claim() call and any subsequent write.
+ *
+ * Coverage extends the round-1 `refreshClaim` fix in auth.ts to
+ * the full write surface. Any handler that mutates the db while
+ * respecting an authenticated claim should call this first.
+ */
+export function claimGuard(
+  db: Database.Database,
+  sessionState: Map<string, unknown>,
+  settings: AletheiaSettings,
+): ToolErrorResponse | null {
+  if (!settings.permissions.enforce) return null;
+  const claimed = refreshClaim(db, sessionState);
+  if (!claimed) return toolError('NO_CLAIM', 'Use claim(key) to authenticate');
+  return null;
 }
 
 function claimError(): ToolErrorResponse {

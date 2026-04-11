@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
+import { claimGuard } from './auth.js';
 import { appendJournalEntry } from '../../db/queries/journal.js';
 import { addTags, getEntryTags, getRelatedEntries } from '../../db/queries/tags.js';
 import { xmlEscape, validateContentSize } from '../../lib/errors.js';
@@ -15,6 +16,10 @@ export function registerJournalTools(
   sessionState: Map<string, unknown>,
 ): void {
   handlers['write_journal'] = (args) => {
+    // Fail-closed on revoked-mid-session key (round-2 fix).
+    const authErr = claimGuard(db, sessionState, settings);
+    if (authErr) return authErr;
+
     // General circuit breaker check
     const cbCheck = checkGeneralCircuitBreaker(sessionState, settings);
     if (cbCheck.blocked) return cbCheck.response;
@@ -165,6 +170,10 @@ export function registerJournalTools(
   };
 
   handlers['promote_to_memory'] = (args) => {
+    // Fail-closed on revoked-mid-session key (round-2 fix).
+    const authErr = claimGuard(db, sessionState, settings);
+    if (authErr) return authErr;
+
     const journalId = args.journal_id as string | undefined;
     const synthesizedKnowledge = args.synthesized_knowledge as string | undefined;
     const key = args.key as string | undefined;
