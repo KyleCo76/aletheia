@@ -5,6 +5,7 @@ import { searchJournal, readJournalEntries } from '../../db/queries/journal.js';
 import { searchMemory, readMemory } from '../../db/queries/memory.js';
 import { listTags, getRelatedEntries } from '../../db/queries/tags.js';
 import { readHandoff } from '../../db/queries/handoff.js';
+import { readStatus } from '../../db/queries/status.js';
 import { formatError, xmlEscape } from '../../lib/errors.js';
 
 export function registerDiscoveryTools(
@@ -117,6 +118,26 @@ export function registerDiscoveryTools(
       } else {
         xml += `<handoff target_key="${xmlEscape(entryId)}" consumed="false"/>`;
       }
+    } else if (entryRow.entry_class === 'status') {
+      // Bug B: the generic `read` tool used to fall through its
+      // if-chain for entry_class='status', emitting only <related>
+      // with no document body. We now dispatch to the same query
+      // helper as `read_status` and format the XML in the same shape
+      // so callers can treat `read` as a uniform entry-type fetcher.
+      const statusResult = readStatus(db, { entryId });
+      if (!statusResult) {
+        return {
+          content: [{ type: 'text', text: formatError('NOT_FOUND', `Status document for entry ${entryId} not found`) }],
+          isError: true,
+        };
+      }
+      const sectionsXml = statusResult.sections
+        .map(
+          (s) =>
+            `<section id="${xmlEscape(s.sectionId)}" state="${xmlEscape(s.state ?? '')}" position="${s.position}">${xmlEscape(s.content)}</section>`,
+        )
+        .join('');
+      xml += `<status version_id="${statusResult.versionId}" updated_at="${statusResult.updatedAt}">${xmlEscape(statusResult.content)}${sectionsXml}</status>`;
     }
 
     // Related entries
