@@ -72,9 +72,7 @@ export function registerStatusTools(
     }
 
     const sizeError = validateContentSize(content);
-    if (sizeError) {
-      return { content: [{ type: 'text', text: sizeError }], isError: true };
-    }
+    if (sizeError) return toolError(sizeError.code, sizeError.message);
 
     const result = replaceStatus(db, { entryId, content, versionId });
 

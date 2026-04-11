@@ -34,12 +34,7 @@ export function registerMemoryTools(
     if (!value) return toolError('MISSING_FIELD', 'value is required');
 
     const sizeError = validateContentSize(value, 'value');
-    if (sizeError) {
-      // validateContentSize already formats the error text including
-      // the CONTENT_TOO_LARGE code. Wrap it with the same {isError}
-      // envelope the rest of the module uses.
-      return { content: [{ type: 'text', text: sizeError }], isError: true };
-    }
+    if (sizeError) return toolError(sizeError.code, sizeError.message);
 
     const result = writeMemory(db, {
       entryId,

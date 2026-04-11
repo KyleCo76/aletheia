@@ -35,11 +35,7 @@ export function registerJournalTools(
     if (!content) return toolError('MISSING_FIELD', 'content is required');
 
     const sizeError = validateContentSize(content);
-    if (sizeError) {
-      // validateContentSize already formats the error text including
-      // the CONTENT_TOO_LARGE code; wrap it in the expected shape.
-      return { content: [{ type: 'text', text: sizeError }], isError: true };
-    }
+    if (sizeError) return toolError(sizeError.code, sizeError.message);
 
     if (critical) {
       if (!memorySummary) {
