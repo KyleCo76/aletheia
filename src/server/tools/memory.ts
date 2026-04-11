@@ -3,7 +3,8 @@ import type { AletheiaSettings } from '../../lib/settings.js';
 import type { ToolHandler } from './auth.js';
 import { writeMemory, retireMemory, readMemoryHistory } from '../../db/queries/memory.js';
 import { addTags, getEntryTags } from '../../db/queries/tags.js';
-import { formatError, xmlEscape, validateContentSize } from '../../lib/errors.js';
+import { xmlEscape, validateContentSize } from '../../lib/errors.js';
+import { toolError, toolSuccess } from './response-format.js';
 import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
 
 export function registerMemoryTools(
@@ -23,27 +24,15 @@ export function registerMemoryTools(
     const versionId = args.version_id as string | undefined;
     const supersedes = args.supersedes as string | undefined;
 
-    if (!entryId) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'entry_id is required') }],
-        isError: true,
-      };
-    }
-    if (!key) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'key is required') }],
-        isError: true,
-      };
-    }
-    if (!value) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'value is required') }],
-        isError: true,
-      };
-    }
+    if (!entryId) return toolError('MISSING_FIELD', 'entry_id is required');
+    if (!key) return toolError('MISSING_FIELD', 'key is required');
+    if (!value) return toolError('MISSING_FIELD', 'value is required');
 
     const sizeError = validateContentSize(value, 'value');
     if (sizeError) {
+      // validateContentSize already formats the error text including
+      // the CONTENT_TOO_LARGE code. Wrap it with the same {isError}
+      // envelope the rest of the module uses.
       return { content: [{ type: 'text', text: sizeError }], isError: true };
     }
 
@@ -57,16 +46,10 @@ export function registerMemoryTools(
     });
 
     if ('conflict' in result) {
-      return {
-        content: [{
-          type: 'text',
-          text: formatError(
-            'OCC_CONFLICT',
-            `Version conflict on key "${key}". Current version_id: ${result.currentVersionId}, current value: ${result.currentValue}`,
-          ),
-        }],
-        isError: true,
-      };
+      return toolError(
+        'OCC_CONFLICT',
+        `Version conflict on key "${key}". Current version_id: ${result.currentVersionId}, current value: ${result.currentValue}`,
+      );
     }
 
     recordWrite(sessionState);
@@ -89,12 +72,9 @@ export function registerMemoryTools(
       }
     }
 
-    return {
-      content: [{
-        type: 'text',
-        text: `<result><memory_entry id="${result.id}" version_id="${result.versionId}" key="${xmlEscape(key)}" created="${result.created}"/>${tagXml}</result>`,
-      }],
-    };
+    return toolSuccess(
+      `<result><memory_entry id="${result.id}" version_id="${result.versionId}" key="${xmlEscape(key)}" created="${result.created}"/>${tagXml}</result>`,
+    );
   };
 
   handlers['retire_memory'] = (args) => {
@@ -102,27 +82,14 @@ export function registerMemoryTools(
     const memoryEntryId = args.memory_entry_id as string | undefined;
     const reason = args.reason as string | undefined;
 
-    if (!entryId) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'entry_id is required') }],
-        isError: true,
-      };
-    }
-    if (!memoryEntryId) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'memory_entry_id is required') }],
-        isError: true,
-      };
-    }
+    if (!entryId) return toolError('MISSING_FIELD', 'entry_id is required');
+    if (!memoryEntryId) return toolError('MISSING_FIELD', 'memory_entry_id is required');
 
     retireMemory(db, { entryId, memoryEntryId, reason });
 
-    return {
-      content: [{
-        type: 'text',
-        text: `<result><retired id="${xmlEscape(memoryEntryId)}" entry_id="${xmlEscape(entryId)}"/></result>`,
-      }],
-    };
+    return toolSuccess(
+      `<result><retired id="${xmlEscape(memoryEntryId)}" entry_id="${xmlEscape(entryId)}"/></result>`,
+    );
   };
 
   handlers['read_memory_history'] = (args) => {
@@ -130,28 +97,13 @@ export function registerMemoryTools(
     const key = args.key as string | undefined;
     const limit = args.limit as number | undefined;
 
-    if (!entryId) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'entry_id is required') }],
-        isError: true,
-      };
-    }
-    if (!key) {
-      return {
-        content: [{ type: 'text', text: formatError('MISSING_FIELD', 'key is required') }],
-        isError: true,
-      };
-    }
+    if (!entryId) return toolError('MISSING_FIELD', 'entry_id is required');
+    if (!key) return toolError('MISSING_FIELD', 'key is required');
 
     const history = readMemoryHistory(db, { entryId, key, limit });
 
     if (history.length === 0) {
-      return {
-        content: [{
-          type: 'text',
-          text: `<result><history key="${xmlEscape(key)}" count="0"/></result>`,
-        }],
-      };
+      return toolSuccess(`<result><history key="${xmlEscape(key)}" count="0"/></result>`);
     }
 
     const versionsXml = history
@@ -160,11 +112,8 @@ export function registerMemoryTools(
       )
       .join('');
 
-    return {
-      content: [{
-        type: 'text',
-        text: `<result><history key="${xmlEscape(key)}" count="${history.length}">${versionsXml}</history></result>`,
-      }],
-    };
+    return toolSuccess(
+      `<result><history key="${xmlEscape(key)}" count="${history.length}">${versionsXml}</history></result>`,
+    );
   };
 }
