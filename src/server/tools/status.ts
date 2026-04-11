@@ -8,7 +8,8 @@ import {
   addSection,
   removeSection,
 } from '../../db/queries/status.js';
-import { formatError, xmlEscape, validateContentSize } from '../../lib/errors.js';
+import { xmlEscape, validateContentSize } from '../../lib/errors.js';
+import { toolError } from './response-format.js';
 import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
 
 export function registerStatusTools(
@@ -20,20 +21,14 @@ export function registerStatusTools(
   handlers['read_status'] = (args) => {
     const entryId = args.entry_id as string | undefined;
     if (!entryId) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_id is required') }],
-        isError: true,
-      };
+      return toolError('INVALID_INPUT', 'entry_id is required');
     }
 
     const sectionId = args.section_id as string | undefined;
     const result = readStatus(db, { entryId, sectionId });
 
     if (!result) {
-      return {
-        content: [{ type: 'text', text: formatError('NOT_FOUND', 'Status document not found') }],
-        isError: true,
-      };
+      return toolError('NOT_FOUND', 'Status document not found');
     }
 
     const sectionsXml = result.sections
@@ -68,10 +63,7 @@ export function registerStatusTools(
     const versionId = (args.version_id as string | undefined) ?? '';
 
     if (!entryId || !content) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_id and content are required') }],
-        isError: true,
-      };
+      return toolError('INVALID_INPUT', 'entry_id and content are required');
     }
 
     const sizeError = validateContentSize(content);
@@ -82,16 +74,10 @@ export function registerStatusTools(
     const result = replaceStatus(db, { entryId, content, versionId });
 
     if ('conflict' in result) {
-      return {
-        content: [{
-          type: 'text',
-          text: formatError(
-            'VERSION_CONFLICT',
-            `Version conflict. Current version: ${result.currentVersionId}. Current content: ${result.currentContent}`,
-          ),
-        }],
-        isError: true,
-      };
+      return toolError(
+        'VERSION_CONFLICT',
+        `Version conflict. Current version: ${result.currentVersionId}. Current content: ${result.currentContent}`,
+      );
     }
 
     recordWrite(sessionState);
@@ -111,10 +97,7 @@ export function registerStatusTools(
     const continueFlag = args.continue as boolean | undefined;
 
     if (!entryId || !sectionId) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_id and section_id are required') }],
-        isError: true,
-      };
+      return toolError('INVALID_INPUT', 'entry_id and section_id are required');
     }
 
     // Look up the status document
@@ -123,10 +106,7 @@ export function registerStatusTools(
     ).get(entryId) as { id: string } | undefined;
 
     if (!doc) {
-      return {
-        content: [{ type: 'text', text: formatError('NOT_FOUND', 'Status document not found') }],
-        isError: true,
-      };
+      return toolError('NOT_FOUND', 'Status document not found');
     }
 
     const updateResult = updateStatusSection(db, { statusId: doc.id, sectionId, state });
@@ -136,16 +116,10 @@ export function registerStatusTools(
     // Surface the miss as NOT_FOUND so callers can react instead of
     // assuming their state machine moved.
     if (!updateResult.found) {
-      return {
-        content: [{
-          type: 'text',
-          text: formatError(
-            'NOT_FOUND',
-            `Section "${sectionId}" not found in status document for entry "${entryId}"`,
-          ),
-        }],
-        isError: true,
-      };
+      return toolError(
+        'NOT_FOUND',
+        `Section "${sectionId}" not found in status document for entry "${entryId}"`,
+      );
     }
 
     let nextSectionXml = '';
@@ -191,10 +165,7 @@ export function registerStatusTools(
     const position = args.position as number | undefined;
 
     if (!entryId || !sectionId || !content) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_id, section_id, and content are required') }],
-        isError: true,
-      };
+      return toolError('INVALID_INPUT', 'entry_id, section_id, and content are required');
     }
 
     const doc = db.prepare(
@@ -202,10 +173,7 @@ export function registerStatusTools(
     ).get(entryId) as { id: string } | undefined;
 
     if (!doc) {
-      return {
-        content: [{ type: 'text', text: formatError('NOT_FOUND', 'Status document not found') }],
-        isError: true,
-      };
+      return toolError('NOT_FOUND', 'Status document not found');
     }
 
     addSection(db, { statusId: doc.id, sectionId, content, position });
@@ -223,10 +191,7 @@ export function registerStatusTools(
     const sectionId = args.section_id as string | undefined;
 
     if (!entryId || !sectionId) {
-      return {
-        content: [{ type: 'text', text: formatError('INVALID_INPUT', 'entry_id and section_id are required') }],
-        isError: true,
-      };
+      return toolError('INVALID_INPUT', 'entry_id and section_id are required');
     }
 
     const doc = db.prepare(
@@ -234,10 +199,7 @@ export function registerStatusTools(
     ).get(entryId) as { id: string } | undefined;
 
     if (!doc) {
-      return {
-        content: [{ type: 'text', text: formatError('NOT_FOUND', 'Status document not found') }],
-        isError: true,
-      };
+      return toolError('NOT_FOUND', 'Status document not found');
     }
 
     removeSection(db, { statusId: doc.id, sectionId });
