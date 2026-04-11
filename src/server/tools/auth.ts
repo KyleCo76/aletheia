@@ -181,8 +181,18 @@ export function registerAuthTools(
       };
     }
 
+    // Look up the caller's claim once up front. The "do you have a
+    // claim at all" check is still gated on settings.permissions.enforce
+    // because dev mode (enforce=false) intentionally allows callers
+    // with no claim to exercise the API. But the subset-delegation
+    // invariant below is a SECURITY property, not a permission check:
+    // if a claim DOES exist, it must not be able to mint a child that
+    // exceeds its own authority, regardless of enforce mode.
+    const claimed = sessionState.get('claimedKey') as
+      | { id: string; permissions: string; entryScope: string | null }
+      | undefined;
+
     if (settings.permissions.enforce) {
-      const claimed = requireClaim(sessionState, settings);
       if (!claimed) return claimError();
 
       if (claimed.permissions !== 'maintenance' && claimed.permissions !== 'create-sub-entries') {
@@ -191,12 +201,14 @@ export function registerAuthTools(
           isError: true,
         };
       }
+    }
 
-      // Item #16 — cascading delegation. The parent (the claimed
-      // caller) cannot mint a child with strictly higher permission
-      // level or with a scope it doesn't itself hold. Both axes are
-      // checked here so the response message names the specific
-      // violation.
+    // Item #16 — cascading delegation. Enforced whenever a claim
+    // exists, including dev mode. A claimed parent cannot mint a
+    // child with strictly higher permission level or a scope it
+    // doesn't itself hold. Unclaimed dev-mode callers (no parent to
+    // compare against) still bypass entirely.
+    if (claimed) {
       if (!canDelegatePermission(claimed.permissions, permissions)) {
         return {
           content: [{
@@ -225,10 +237,6 @@ export function registerAuthTools(
         };
       }
     }
-
-    const claimed = sessionState.get('claimedKey') as
-      | { id: string; permissions: string; entryScope: string | null }
-      | undefined;
 
     const result = createKey(db, {
       permissions,

@@ -210,7 +210,26 @@ test('global parent CAN delegate to any scope (downward)', () => {
   assert.notEqual(r.isError, true);
 });
 
-test('dev mode (enforce=false) bypasses delegation checks', () => {
+test('dev mode with NO claim allows arbitrary create_key (unsecured context)', () => {
+  // An unclaimed dev-mode session has no parent to compare against,
+  // so subset enforcement is vacuous. create_key must still work
+  // end-to-end — this is the first-run / unbootstrapped path.
+  const db = setupDb();
+  const { handlers } = makeHandlers(db, false);
+
+  const r = handlers['create_key']({
+    permissions: 'maintenance',
+    entry_scope: 'proj-fresh',
+  });
+  assert.notEqual(r.isError, true, 'unclaimed dev mode should allow minting freely');
+});
+
+test('dev mode WITH a claim STILL enforces subset (security invariant)', () => {
+  // Prior to v0.2.1 this path let a create-sub-entries claim mint a
+  // maintenance child in dev mode — a privilege escalation dressed
+  // up as "permission enforcement is off". Subset delegation is a
+  // security invariant, not a permission check: if you're claimed
+  // as X, you cannot mint a key that exceeds X, full stop.
   const db = setupDb();
   const { handlers, sessionState } = makeHandlers(db, false);
   const parent = createKey(db, {
@@ -223,12 +242,21 @@ test('dev mode (enforce=false) bypasses delegation checks', () => {
     entryScope: 'proj-a',
   });
 
-  // Both escalations would be blocked under enforce=true.
-  const r = handlers['create_key']({
+  // Permission-level escalation: blocked even in dev mode.
+  const rPerm = handlers['create_key']({
     permissions: 'maintenance',
+    entry_scope: 'proj-a',
+  });
+  assert.equal(rPerm.isError, true, 'permission-level escalation must be blocked even in dev mode');
+  assert.match(rPerm.content[0].text, /Cannot delegate.*maintenance.*create-sub-entries/);
+
+  // Scope lateral move: also blocked even in dev mode.
+  const rScope = handlers['create_key']({
+    permissions: 'create-sub-entries',
     entry_scope: 'proj-b',
   });
-  assert.notEqual(r.isError, true, 'dev mode should still allow this');
+  assert.equal(rScope.isError, true, 'scope lateral move must be blocked even in dev mode');
+  assert.match(rScope.content[0].text, /Cannot delegate scope.*proj-b.*proj-a/);
 });
 
 test('the audit chain is recorded — created_by points at the parent key', () => {
