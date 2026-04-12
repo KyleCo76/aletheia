@@ -2,6 +2,56 @@
 
 All notable changes to Aletheia are documented in this file.
 
+## v0.2.8 — 2026-04-12
+
+Hermes alignment release. Three changes enabling the Hermes
+Orchestration Daemon to manage Aletheia key lifecycle and
+FrequencyManager state for spawned teammate agents.
+
+### Added
+
+- **Key revocation via `modify_key(key_id, revoked=true)`.** New
+  `revoked INTEGER NOT NULL DEFAULT 0` column on the `keys` table
+  (migration 4). `validateKey()` rejects revoked keys with a
+  `{ revoked: true }` sentinel. The `claim` handler returns
+  `INVALID_KEY` for revoked keys. `refreshClaim()` treats a
+  revoked key the same as a deleted key — clears the session
+  cache and fails closed. `modify_key` now accepts optional
+  `revoked` boolean alongside optional `permissions` (at least
+  one required). Hermes Daemon can now revoke teammate keys on
+  agent exit instead of accumulating orphaned keys indefinitely.
+
+- **Key names via `create_key(permissions, entry_scope?, name?)`.** New
+  optional `name TEXT` column on the `keys` table (migration 4,
+  bundled with revoked). `create_key` accepts `name` parameter.
+  `list_keys` returns `name` and `revoked` fields in output.
+  Hermes names keys `teammate-{agent_id}` for lifecycle
+  management — the Daemon can now query "which teammate keys
+  exist?" by inspecting the name field.
+
+- **`POST /reset-frequency` HTTP endpoint on the Unix socket.**
+  New `FrequencyManager.reset()` method zeros `callCount`,
+  resets `l1CurrentInterval` / `l2CurrentInterval` to base
+  values, and clears content hashes. The endpoint returns
+  `{ reset: true, callCount: 0 }`. Hermes can now reset
+  injection frequency after compaction without the side effects
+  of full MCP reconnection (which also clears claimed key,
+  circuit breaker state, and all sessionState).
+
+### Changed
+
+- **`modify_key` no longer requires `permissions`.** Either
+  `permissions` or `revoked` (or both) must be provided. This
+  makes revocation a single tool call without needing to also
+  specify a permission level.
+
+### Test infrastructure
+
+- **108 tests total**, all green. v0.2.8 added 14 new cases in
+  `test/hermes-alignment.test.mjs` covering key revocation (6),
+  key names (5), migration backward compatibility (1), and
+  FrequencyManager reset (2).
+
 ## v0.2.7 — 2026-04-11
 
 Seventh same-day patch release. Round-4 fresh-discovery sweep

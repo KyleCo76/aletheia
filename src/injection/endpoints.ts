@@ -58,6 +58,12 @@ export function createEndpointHandlers(
       }));
     },
 
+    'POST /reset-frequency': (_req, res) => {
+      frequencyManager.reset();
+      res.writeHead(200);
+      res.end(JSON.stringify({ reset: true, callCount: 0 }));
+    },
+
     'GET /handoff': (_req, res) => {
       const claimedEntry = sessionState.get('claimedEntry') as string | undefined;
       if (!claimedEntry) {

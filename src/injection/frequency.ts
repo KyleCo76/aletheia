@@ -20,6 +20,14 @@ export class FrequencyManager {
     this.bumpMultiplier = DEFAULTS.adaptiveNoChangeBumpMultiplier;
   }
 
+  reset(): void {
+    this.callCount = 0;
+    this.l1CurrentInterval = this.l1Interval;
+    this.l2CurrentInterval = this.l2Interval;
+    this.lastL1Hash = '';
+    this.lastL2Hash = '';
+  }
+
   tick(): { injectL1: boolean; injectL2: boolean } {
     this.callCount++;
 

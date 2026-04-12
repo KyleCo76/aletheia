@@ -184,7 +184,13 @@ function runMigration3(db: Database.Database): void {
   setSchemaVersion(db, 3);
 }
 
-const migrations: Array<(db: Database.Database) => void> = [runMigration1, runMigration2, runMigration3];
+function runMigration4(db: Database.Database): void {
+  db.exec(`ALTER TABLE keys ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`);
+  db.exec(`ALTER TABLE keys ADD COLUMN name TEXT`);
+  setSchemaVersion(db, 4);
+}
+
+const migrations: Array<(db: Database.Database) => void> = [runMigration1, runMigration2, runMigration3, runMigration4];
 
 /**
  * The schema version this build targets. Any database opened by

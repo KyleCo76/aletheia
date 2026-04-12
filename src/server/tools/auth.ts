@@ -48,12 +48,12 @@ export function refreshClaim(
   if (!cached) return null;
 
   const row = db.prepare(
-    `SELECT id, permissions, entry_scope FROM keys WHERE id = ?`,
+    `SELECT id, permissions, entry_scope, revoked FROM keys WHERE id = ?`,
   ).get(cached.id) as
-    | { id: string; permissions: string; entry_scope: string | null }
+    | { id: string; permissions: string; entry_scope: string | null; revoked: number }
     | undefined;
 
-  if (!row) {
+  if (!row || row.revoked) {
     sessionState.delete('claimedKey');
     return null;
   }
@@ -126,6 +126,7 @@ export function registerAuthTools(
 
     const result = validateKey(db, { keyValue });
     if (!result) return toolError('INVALID_KEY', 'Key not found or invalid');
+    if ('revoked' in result) return toolError('INVALID_KEY', 'Key has been revoked');
 
     sessionState.set('claimedKey', result);
 
@@ -234,6 +235,7 @@ export function registerAuthTools(
   handlers['create_key'] = (args): ToolErrorResponse | ToolSuccessResponse => {
     const permissions = args.permissions as string | undefined;
     const entryScope = args.entry_scope as string | undefined;
+    const name = args.name as string | undefined;
 
     if (!permissions) return toolError('INVALID_INPUT', 'permissions is required');
 
@@ -283,6 +285,7 @@ export function registerAuthTools(
       permissions,
       entryScope,
       createdBy: claimed?.id,
+      name,
     });
 
     return toolSuccess(
@@ -293,17 +296,24 @@ export function registerAuthTools(
   handlers['modify_key'] = (args): ToolErrorResponse | ToolSuccessResponse => {
     const keyId = args.key_id as string | undefined;
     const permissions = args.permissions as string | undefined;
+    const revoked = args.revoked as boolean | undefined;
 
-    if (!keyId || !permissions) {
-      return toolError('INVALID_INPUT', 'key_id and permissions are required');
+    if (!keyId) {
+      return toolError('INVALID_INPUT', 'key_id is required');
     }
 
-    const validPermissions = ['read-only', 'read-write', 'create-sub-entries', 'maintenance'];
-    if (!validPermissions.includes(permissions)) {
-      return toolError(
-        'INVALID_INPUT',
-        `permissions must be one of: ${validPermissions.join(', ')}`,
-      );
+    if (permissions === undefined && revoked === undefined) {
+      return toolError('INVALID_INPUT', 'At least one of permissions or revoked is required');
+    }
+
+    if (permissions !== undefined) {
+      const validPermissions = ['read-only', 'read-write', 'create-sub-entries', 'maintenance'];
+      if (!validPermissions.includes(permissions)) {
+        return toolError(
+          'INVALID_INPUT',
+          `permissions must be one of: ${validPermissions.join(', ')}`,
+        );
+      }
     }
 
     // refreshClaim re-validates the cached key against the db —
@@ -316,14 +326,14 @@ export function registerAuthTools(
 
     const callerPermissions = claimed?.permissions ?? 'read-only';
 
-    const result = modifyKey(db, { keyId, permissions, callerPermissions });
+    const result = modifyKey(db, { keyId, permissions, revoked, callerPermissions });
 
     if ('error' in result) {
       return toolError('MODIFY_FAILED', result.error);
     }
 
     return toolSuccess(
-      `<result><id>${result.id}</id><permissions>${result.permissions}</permissions></result>`,
+      `<result><id>${result.id}</id><permissions>${result.permissions}</permissions><revoked>${result.revoked}</revoked></result>`,
     );
   };
 
@@ -341,7 +351,7 @@ export function registerAuthTools(
     const keyXml = keys
       .map(
         (k) =>
-          `<key><id>${k.id}</id><permissions>${k.permissions}</permissions><entry_scope>${xmlEscape(k.entryScope ?? '')}</entry_scope><created_at>${k.createdAt}</created_at></key>`,
+          `<key><id>${k.id}</id><permissions>${k.permissions}</permissions><entry_scope>${xmlEscape(k.entryScope ?? '')}</entry_scope><created_at>${k.createdAt}</created_at><name>${xmlEscape(k.name ?? '')}</name><revoked>${k.revoked}</revoked></key>`,
       )
       .join('');
 

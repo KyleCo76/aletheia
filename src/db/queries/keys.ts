@@ -58,15 +58,15 @@ export function canDelegateScope(
 
 export function createKey(
   db: Database.Database,
-  params: { permissions: string; entryScope?: string; createdBy?: string }
+  params: { permissions: string; entryScope?: string; createdBy?: string; name?: string }
 ): { id: string; keyValue: string; permissions: string } {
   const id = crypto.randomUUID();
   const keyValue = crypto.randomBytes(32).toString('hex');
 
   db.prepare(
-    `INSERT INTO keys (id, key_value, permissions, entry_scope, created_by)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(id, keyValue, params.permissions, params.entryScope ?? null, params.createdBy ?? null);
+    `INSERT INTO keys (id, key_value, permissions, entry_scope, created_by, name)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(id, keyValue, params.permissions, params.entryScope ?? null, params.createdBy ?? null, params.name ?? null);
 
   return { id, keyValue, permissions: params.permissions };
 }
@@ -127,28 +127,24 @@ export function getKeyChain(db: Database.Database, keyId: string): string {
 export function validateKey(
   db: Database.Database,
   params: { keyValue: string }
-): { id: string; permissions: string; entryScope: string | null } | null {
+): { id: string; permissions: string; entryScope: string | null } | { revoked: true } | null {
   const row = db.prepare(
-    `SELECT id, permissions, entry_scope FROM keys WHERE key_value = ?`
+    `SELECT id, permissions, entry_scope, revoked FROM keys WHERE key_value = ?`
   ).get(params.keyValue) as
-    | { id: string; permissions: string; entry_scope: string | null }
+    | { id: string; permissions: string; entry_scope: string | null; revoked: number }
     | undefined;
 
   if (!row) return null;
+  if (row.revoked) return { revoked: true };
 
   return { id: row.id, permissions: row.permissions, entryScope: row.entry_scope };
 }
 
 export function modifyKey(
   db: Database.Database,
-  params: { keyId: string; permissions: string; callerPermissions: string }
-): { id: string; permissions: string } | { error: string } {
+  params: { keyId: string; permissions?: string; revoked?: boolean; callerPermissions: string }
+): { id: string; permissions: string; revoked: boolean } | { error: string } {
   const callerLevel = permissionLevel(params.callerPermissions);
-  const targetLevel = permissionLevel(params.permissions);
-
-  if (targetLevel >= callerLevel) {
-    return { error: 'Cannot set permissions at or above caller scope' };
-  }
 
   const existing = db.prepare(`SELECT id, permissions FROM keys WHERE id = ?`).get(params.keyId) as
     | { id: string; permissions: string }
@@ -163,15 +159,32 @@ export function modifyKey(
     return { error: 'Cannot modify key at or above caller scope' };
   }
 
-  db.prepare(`UPDATE keys SET permissions = ? WHERE id = ?`).run(params.permissions, params.keyId);
+  let finalPermissions = existing.permissions;
+  if (params.permissions !== undefined) {
+    const targetLevel = permissionLevel(params.permissions);
+    if (targetLevel >= callerLevel) {
+      return { error: 'Cannot set permissions at or above caller scope' };
+    }
+    finalPermissions = params.permissions;
+  }
 
-  return { id: params.keyId, permissions: params.permissions };
+  const finalRevoked = params.revoked ?? false;
+
+  if (params.permissions !== undefined && params.revoked !== undefined) {
+    db.prepare(`UPDATE keys SET permissions = ?, revoked = ? WHERE id = ?`).run(finalPermissions, finalRevoked ? 1 : 0, params.keyId);
+  } else if (params.permissions !== undefined) {
+    db.prepare(`UPDATE keys SET permissions = ? WHERE id = ?`).run(finalPermissions, params.keyId);
+  } else if (params.revoked !== undefined) {
+    db.prepare(`UPDATE keys SET revoked = ? WHERE id = ?`).run(finalRevoked ? 1 : 0, params.keyId);
+  }
+
+  return { id: params.keyId, permissions: finalPermissions, revoked: finalRevoked };
 }
 
 export function listKeys(
   db: Database.Database,
   params: { callerKeyId?: string }
-): Array<{ id: string; permissions: string; entryScope: string | null; createdAt: string }> {
+): Array<{ id: string; permissions: string; entryScope: string | null; createdAt: string; name: string | null; revoked: boolean }> {
   if (params.callerKeyId) {
     const caller = db.prepare(`SELECT permissions FROM keys WHERE id = ?`).get(params.callerKeyId) as
       | { permissions: string }
@@ -188,13 +201,15 @@ export function listKeys(
 
     const placeholders = belowPermissions.map(() => '?').join(', ');
     const rows = db.prepare(
-      `SELECT id, permissions, entry_scope, created_at FROM keys
+      `SELECT id, permissions, entry_scope, created_at, name, revoked FROM keys
        WHERE permissions IN (${placeholders})`
     ).all(...belowPermissions) as Array<{
       id: string;
       permissions: string;
       entry_scope: string | null;
       created_at: string;
+      name: string | null;
+      revoked: number;
     }>;
 
     return rows.map((r) => ({
@@ -202,16 +217,20 @@ export function listKeys(
       permissions: r.permissions,
       entryScope: r.entry_scope,
       createdAt: r.created_at,
+      name: r.name,
+      revoked: !!r.revoked,
     }));
   }
 
   const rows = db.prepare(
-    `SELECT id, permissions, entry_scope, created_at FROM keys`
+    `SELECT id, permissions, entry_scope, created_at, name, revoked FROM keys`
   ).all() as Array<{
     id: string;
     permissions: string;
     entry_scope: string | null;
     created_at: string;
+    name: string | null;
+    revoked: number;
   }>;
 
   return rows.map((r) => ({
@@ -219,5 +238,7 @@ export function listKeys(
     permissions: r.permissions,
     entryScope: r.entry_scope,
     createdAt: r.created_at,
+    name: r.name,
+    revoked: !!r.revoked,
   }));
 }

@@ -57,20 +57,22 @@ const TOOL_DEFINITIONS = [
       properties: {
         permissions: { type: 'string', description: 'Permission level: read-only, read-write, create-sub-entries, or maintenance' },
         entry_scope: { type: 'string', description: 'Optional entry scope for the key' },
+        name: { type: 'string', description: 'Optional human-readable name for the key (e.g. teammate-agent-id)' },
       },
       required: ['permissions'],
     },
   },
   {
     name: 'modify_key',
-    description: 'Modify an existing API key',
+    description: 'Modify an existing API key (change permissions and/or revoke)',
     inputSchema: {
       type: 'object' as const,
       properties: {
         key_id: { type: 'string', description: 'The key ID to modify' },
         permissions: { type: 'string', description: 'New permission level' },
+        revoked: { type: 'boolean', description: 'Set true to revoke the key (prevents future claims)' },
       },
-      required: ['key_id', 'permissions'],
+      required: ['key_id'],
     },
   },
   {
@@ -281,7 +283,7 @@ export async function main(): Promise<void> {
 
   // 4. Create MCP Server instance
   const server = new Server(
-    { name: 'aletheia', version: '0.2.7' },
+    { name: 'aletheia', version: '0.2.8' },
     { capabilities: { tools: {} } },
   );
 
