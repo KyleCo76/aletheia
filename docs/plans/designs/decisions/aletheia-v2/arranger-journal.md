@@ -643,3 +643,67 @@ All 10 phase section + conductor review pairs written and approved. Plan ready f
 
 **Why this matters:** V1's silent-failure class is exactly the same failure mode as V1's scope-leak bug — failure-by-omission rather than explicit error. V2's architectural fixes (per-scope ATTACH for scope-leak; per-row entries model partly removing entry_id confusion) reduce the surface area but don't eliminate the bug class — explicit code discipline is still required. The mandatory makes the discipline non-negotiable.
 
+---
+
+## Phase 6: Finalization & Commit
+
+### Verification
+
+**Subagent dispatched:** Read-only verification subagent ran the full structural + content + domain-specific checklist (14 items: 11 standard + D1 KG forward-compat seams + D2 helpful-failure principle + D3 SDK launch flag combination).
+
+**Result:** VERIFICATION PASS with 1 minor advisory.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Sentinel marker pair matching (44 markers) | PASS |
+| 2 | Header-sentinel consistency | PASS |
+| 3 | YAML frontmatter validation (6 required fields) | PASS |
+| 4 | `<sections>` index completeness (22 entries) | PASS |
+| 5 | `<section>` tag matching (22 opens + 22 closes) | PASS |
+| 6 | Authority tag well-formedness (90 opens / 90 closes; only `<mandatory>`, `<core>`, `<guidance>`, `<context>`) | PASS |
+| 7 | Self-containment (Copyist test, 6 H3 components × 10 phases = 60 entries) | PASS |
+| 8 | User override propagation | N/A — none |
+| 9 | Danger file annotation (prose + `⚠ DANGER FILE` markers) | PASS |
+| 10 | Large document marker test (`<!-- /conductor-review:10 -->` at line 6314) | PASS |
+| 11 | Bidirectional section check | PASS |
+| D1 | KG forward-compat seam markers (all 7 IS-6 stubs documented in Phase 6) | PASS |
+| D2 | Helpful-failure principle (mandatory + 3 verification items in CR-5) | PASS (advisory: 3 items vs journal's claimed 4 — substance fully covered, count was a journal bookkeeping error) |
+| D3 | SDK launch flag combination (11 flags + `--output-format` + "Do NOT use --bare" mandatory) | PASS |
+
+**Verification iterations:** 1 (no fixes required).
+
+### Plan-index generation
+
+Plan-index inserted between H1 title and `<sections>` block (lines 12-37). Block size: 25 lines (1 start + 1 verified + 1 overview + 1 phase-summary + 20 phase/CR pairs + 1 end). Insertion shifted all sentinel positions by +26 (25 index + 1 blank).
+
+Verified timestamp: `2026-04-26T07:50:17`. All sentinel line numbers spot-checked against post-insertion file (overview at 63-122 ✓, phase-summary at 124-151 ✓, phase:1 at 153-578 ✓, phase:10 at 5816-6271 ✓, conductor-review:10 at 6273-6340 ✓).
+
+Final plan size: 6340 lines.
+
+### Commit
+
+**Commit hash:** `9bd917f` on branch `master`.
+**Files committed (7 files, 10400 insertions):**
+- `docs/plans/designs/aletheia-v2-plan.md` — implementation plan (locked)
+- `docs/plans/designs/2026-04-17-aletheia-v2-design.md` — Dramaturg input (was untracked; included for completeness)
+- `docs/plans/designs/decisions/aletheia-v2/dramaturg-journal.md` — Dramaturg journal (was untracked)
+- `docs/plans/designs/decisions/aletheia-v2/ceo-review-feedback.md` — CEO 9 resolved decisions (was untracked)
+- `docs/plans/designs/decisions/aletheia-v2/knowledge-graph-research-handoff.md` — V3 KG forward-look (was untracked)
+- `docs/plans/designs/decisions/aletheia-v2/arranger-journal.md` — this journal
+- `docs/plans/designs/decisions/aletheia-v2/arranger-handoff.md` — V3 implementation handoff
+
+**Commit message format:** standard `feat:` prefix per Arranger protocol; named the feature, phase count, journal location, and inline-listed all companion docs with their provenance.
+
+**NOT committed:** pre-existing modifications to `pm-instructions.md` (Kyle's work outside Arranger scope) and other untracked files in repo root (PM workflow artifacts unrelated to V2).
+
+**NOT pushed:** per Arranger protocol — branch management is the Conductor's concern.
+
+### Session complete
+
+The Arranger's work is done. Plan is locked. Conductor pipeline takes over.
+
+**Next steps for Kyle (out of Arranger scope, FYI only):**
+1. (Optional) Push commit to origin: `git push origin master`
+2. Invoke Conductor with: `/conductor docs/plans/designs/aletheia-v2-plan.md` (or whatever the Conductor invocation pattern is in Kyle's setup)
+3. Per the V3 forward-look in `arranger-handoff.md`: V3 Dramaturg session runs AFTER V2 is implemented and deployed.
+
