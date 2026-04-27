@@ -10,29 +10,29 @@ tier: 2
 # Implementation Plan: Aletheia V2
 
 <!-- plan-index:start -->
-<!-- verified:2026-04-26T07:50:17 -->
-<!-- overview lines:63-122 -->
-<!-- phase-summary lines:124-151 -->
-<!-- phase:1 lines:153-578 title:"Foundation" -->
-<!-- conductor-review:1 lines:580-622 -->
-<!-- phase:2 lines:624-1193 title:"Storage Foundation" -->
-<!-- conductor-review:2 lines:1195-1254 -->
-<!-- phase:3 lines:1256-1858 title:"Auth + Sessions" -->
-<!-- conductor-review:3 lines:1860-1905 -->
-<!-- phase:4 lines:1907-2322 title:"MCP Server Core + Hook Endpoint" -->
-<!-- conductor-review:4 lines:2324-2392 -->
-<!-- phase:5 lines:2394-3049 title:"Tools (V1-Equivalent + V2-New)" -->
-<!-- conductor-review:5 lines:3051-3119 -->
-<!-- phase:6 lines:3121-3586 title:"Hook Layer + Injection Pipeline" -->
-<!-- conductor-review:6 lines:3588-3649 -->
-<!-- phase:7 lines:3651-4427 title:"Digest Pipeline + Mass-Ingest" -->
-<!-- conductor-review:7 lines:4429-4489 -->
-<!-- phase:8 lines:4491-5072 title:"V1 to V2 Migration Tool" -->
-<!-- conductor-review:8 lines:5074-5133 -->
-<!-- phase:9 lines:5135-5754 title:"Reconciliation + Operational Polish + Shadow Mode" -->
-<!-- conductor-review:9 lines:5756-5814 -->
-<!-- phase:10 lines:5816-6271 title:"Distribution + Release" -->
-<!-- conductor-review:10 lines:6273-6340 -->
+<!-- verified:2026-04-27T04:00:52 -->
+<!-- overview lines:63-131 -->
+<!-- phase-summary lines:133-160 -->
+<!-- phase:1 lines:162-601 title:"Foundation" -->
+<!-- conductor-review:1 lines:603-645 -->
+<!-- phase:2 lines:647-1267 title:"Storage Foundation" -->
+<!-- conductor-review:2 lines:1269-1328 -->
+<!-- phase:3 lines:1330-1932 title:"Auth + Sessions" -->
+<!-- conductor-review:3 lines:1934-1979 -->
+<!-- phase:4 lines:1981-2396 title:"MCP Server Core + Hook Endpoint" -->
+<!-- conductor-review:4 lines:2398-2466 -->
+<!-- phase:5 lines:2468-3135 title:"Tools (V1-Equivalent + V2-New)" -->
+<!-- conductor-review:5 lines:3137-3202 -->
+<!-- phase:6 lines:3204-3681 title:"Hook Layer + Injection Pipeline" -->
+<!-- conductor-review:6 lines:3683-3744 -->
+<!-- phase:7 lines:3746-4522 title:"Digest Pipeline + Mass-Ingest" -->
+<!-- conductor-review:7 lines:4524-4584 -->
+<!-- phase:8 lines:4586-5786 title:"V1 to V2 Migration Tool" -->
+<!-- conductor-review:8 lines:5788-5854 -->
+<!-- phase:9 lines:5856-6587 title:"Reconciliation + Operational Polish + Shadow Mode" -->
+<!-- conductor-review:9 lines:6589-6647 -->
+<!-- phase:10 lines:6649-7127 title:"Distribution + Release" -->
+<!-- conductor-review:10 lines:7129-7196 -->
 <!-- plan-index:end -->
 
 <sections>
@@ -80,14 +80,23 @@ This plan implements **Aletheia V2** — a greenfield Rust rewrite of the existi
 - Two-surface migration: `migrate_from_v1` (one-shot V1 → V2 structural restructure) + `start_migration` (generic V2.x → V2.y+1 DDL)
 - Comprehensive immutable `sys_audit_log` (5-year retention) with SQLite trigger-enforced append-only
 - Shadow Mode infrastructure (V2 doesn't exercise; V3 uses for ranking comparison)
-- npm-distributed Rust binary (`npm install -g aletheia`) using `optionalDependencies` pattern (esbuild/swc/biome model)
+- npm-distributed Rust binary (`npm install -g aletheia-v2`) using `optionalDependencies` pattern (esbuild/swc/biome model)
+
+**Install model (post-CEO-pre-build review — side-by-side with V1):**
+- V2 publishes as the **distinct npm package `aletheia-v2`** (NOT as `aletheia@2.0.0` overwriting V1's `aletheia@0.2.8`).
+- V2 binary name: `aletheia-v2` (CLI command), distinct from V1's `aletheia`.
+- V2 data directory: `~/.aletheia-v2/` (parallel to V1's `~/.aletheia/`; never colliding).
+- Both V1 and V2 install + run simultaneously. CC's `~/.claude/settings.json` registers them as separate MCP servers (`aletheia` and `aletheia-v2`) with separate hook entries.
+- Migration tool reads V1 read-only at `~/.aletheia/data/aletheia.db`, writes V2 to `~/.aletheia-v2/`. **V1 is NEVER renamed or modified by the migration.** V1's MCP server can keep running on V1's data throughout migration and afterward.
+- Cutover is user-driven (uninstall V1 npm + remove V1 entry from `~/.claude/settings.json` + optional `rm -rf ~/.aletheia/`) AFTER user validates V2. Documented in `docs/MIGRATION-FROM-V1.md`.
+- Master-key flow Option 1: `aletheia-v2 setup` mints a fresh V2 master key (independent of V1's master); `migrate-from-v1` imports V1 keys into V2's `keys` table preserving original permissions but with `is_master_key=0` (V1's master becomes a 'maintenance'-permission V2 sub-key; the new V2 master is the trust root).
 
 **Key decisions reflected in this plan (Phase 3 settled):**
 - **Q1 — Language: Rust** (rmcp 1.5.x + rusqlite bundled + interprocess v2 + tokio + cargo-dist). Rationale: memory footprint at scale (5-15MB resident vs Node's 80-150MB) becomes meaningful as concurrent CC sessions grow; single static binary; type-system discipline on SQL paths; user preference for Rust where it makes sense.
 - **Q2 — Hooks payload format: JSON** (preserves V1's actual behavior; design doc's "YAML-in-XML inherited from V1" was a doc-error — V1 returns JSON).
-- **Q3 — SDK digest subprocess cwd:** `~/.aletheia/sdk-runtime/<queue_id>/` per-run (created before spawn, deleted on commit, 24h orphan retention).
-- **Q4 — `session_id` discovery file:** single-line plain text at `~/.aletheia/sessions/<my_pid>.session_id` (mode 0600), written by SessionStart hook, read by MCP server via `<my_ppid>` lookup.
-- **Q5 — V1→V2 row-transform mechanics:** V1's 2-level hierarchy (entries → typed children) flattens to V2's per-row entries model. V1 memory key → tag (`key:<v1_key>`); V1 entries.id preserved as `entry_id_legacy:<v1-uuid>` tag; `memory_journal_provenance` table KEPT (V3 KG `derived_from` edge type); keys metadata in `scope_registry.db.keys` with raw values in `~/.aletheia/keys/<name>.key` files; `journal_entries.sub_section` → `sub_section:<value>` tag.
+- **Q3 — SDK digest subprocess cwd:** `~/.aletheia-v2/sdk-runtime/<queue_id>/` per-run (created before spawn, deleted on commit, 24h orphan retention).
+- **Q4 — `session_id` discovery file:** single-line plain text at `~/.aletheia-v2/sessions/<my_pid>.session_id` (mode 0600), written by SessionStart hook, read by MCP server via `<my_ppid>` lookup.
+- **Q5 — V1→V2 row-transform mechanics:** V1's 2-level hierarchy (entries → typed children) flattens to V2's per-row entries model. V1 memory key → tag (`key:<v1_key>`); V1 entries.id preserved as `entry_id_legacy:<v1-uuid>` tag; `memory_journal_provenance` table KEPT (V3 KG `derived_from` edge type); keys metadata in `scope_registry.db.keys` with raw values in `~/.aletheia-v2/keys/<name>.key` files; `journal_entries.sub_section` → `sub_section:<value>` tag.
 - **Q6 — settings.toml:** V1 sections preserved + 11 new V2 sections. `[injection.weights]` MUST be parsed as `HashMap<String, f64>` (V3's `graph_proximity` weight added non-breaking).
 - **Q7 — KG-stub patterns (7 architectural seams):** Pluggable `Signal` trait + `HashMap` weights + extensible `Context` struct + `memory_journal_provenance` table preserved + extensible dedup response struct + minimal `show_related` MCP signature + minimal `query_past_state` MCP signature.
 - **Q8 — Cross-DB reconciliation:** Reconciler module scans `sys_audit_log` for orphaned `*_proposed`/`_started` events without `*_committed`; runs at MCP server startup + every 5 minutes + on-demand via master-key `reconcile()` tool. Operations designed idempotent for safe retry.
@@ -175,7 +184,7 @@ Set up a Cargo workspace with one main binary crate. Workspace `Cargo.toml`:
 
 ```toml
 [workspace]
-members = ["crates/aletheia"]
+members = ["crates/aletheia-v2"]
 resolver = "2"
 
 [workspace.package]
@@ -201,9 +210,23 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 ```
 
-The single binary crate (`crates/aletheia/Cargo.toml`) inherits workspace dependencies. The binary name is `aletheia` (matches V1's npm package and CLI name).
+**SQLite ATTACH ceiling raised at build time.** Default `SQLITE_MAX_ATTACHED=10` is too tight for forward-compat (CEO sessions could span more than 10 scopes as project count grows). `rusqlite`'s `bundled` feature compiles SQLite from C source — pass the higher cap as a build define via `crates/aletheia-v2/build.rs`:
 
-**Module structure (under `crates/aletheia/src/`):**
+```rust
+// crates/aletheia-v2/build.rs
+fn main() {
+    println!("cargo:rustc-env=SQLITE_MAX_ATTACHED=125");
+    // The bundled SQLite picks up SQLITE_MAX_ATTACHED via libsqlite3-sys's build script
+    // which honors LIBSQLITE3_SYS_USE_PKG_CONFIG / SQLITE3_INCLUDE_DIR / and rust-env-defines
+    println!("cargo:rerun-if-changed=build.rs");
+}
+```
+
+Alternative (cleaner): set in `Cargo.toml` via `[dependencies.libsqlite3-sys]` build-time defines once the precise mechanism is verified during Phase 1 build. The hard maximum SQLite supports is 125 (per SQLite docs) — bumping to that ceiling means ATTACH-related failures only surface when claims exceed 125 scopes, well beyond practical V2 hierarchies. Plan documents the ceiling; tool error response makes it explicit if hit.
+
+The single binary crate (`crates/aletheia-v2/Cargo.toml`) inherits workspace dependencies. The binary name is `aletheia-v2` (distinct from V1's `aletheia` per side-by-side install model — see Overview "Install model").
+
+**Module structure (under `crates/aletheia-v2/src/`):**
 
 ```
 src/
@@ -586,8 +609,8 @@ This phase has no production behavior to integration-test; that begins in Phase 
 
 <mandatory>All checklist items must be verified before proceeding.</mandatory>
 
-- [ ] `crates/aletheia/Cargo.toml` exists with all workspace deps inherited; `cargo build --workspace` succeeds with zero warnings
-- [ ] Module structure matches the plan: `src/lib/settings/` is a directory with per-section submodules (NOT a single file) — verified by `ls crates/aletheia/src/lib/settings/`
+- [ ] `crates/aletheia-v2/Cargo.toml` exists with all workspace deps inherited; `cargo build --workspace` succeeds with zero warnings
+- [ ] Module structure matches the plan: `src/lib/settings/` is a directory with per-section submodules (NOT a single file) — verified by `ls crates/aletheia-v2/src/lib/settings/`
 - [ ] `src/lib/settings/injection.rs::InjectionWeights` is `HashMap<String, f64>` (NOT a struct with named fields) — verified by reading the file. **Critical for V3 forward-compat (IS-6).**
 - [ ] `Settings::default()` produces a fully-populated struct with values matching Q6 (spot-check `injection.weights.0.get("tag_overlap")` == 0.4, `session_locks.heartbeat_seconds` == 60, `mass_ingest.approval_ttl_hours` == 24)
 - [ ] Unit test confirms `InjectionWeights` parses an arbitrary V3-anticipated key (e.g., `graph_proximity = 0.5`) without error
@@ -740,7 +763,39 @@ CREATE INDEX IF NOT EXISTS idx_provenance_memory ON memory_journal_provenance(me
 CREATE INDEX IF NOT EXISTS idx_provenance_journal ON memory_journal_provenance(journal_entry_id);
 "#;
 
-pub const ALL_TABLES: &[&str] = &[ENTRIES_TABLE, STATUS_SECTIONS_TABLE, FEATURES_TABLE, MEMORY_JOURNAL_PROVENANCE_TABLE];
+// FTS5 full-text search over entries.content (consumed by Phase 5's `search` tool).
+// Per-scope (lives in each scope's `.db`); sync triggers fire on every INSERT/UPDATE of entries.
+// Trigger overhead is minor for normal writes; Phase 8's V1→V2 bulk migration disables triggers
+// during INSERT then issues a single FTS5 rebuild for performance.
+pub const ENTRIES_FTS_TABLE: &str = r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(content, content=entries, content_rowid=internal_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_entries_fts_insert AFTER INSERT ON entries BEGIN
+  INSERT INTO entries_fts(rowid, content) VALUES (new.internal_id, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_entries_fts_update AFTER UPDATE ON entries BEGIN
+  UPDATE entries_fts SET content = new.content WHERE rowid = new.internal_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_entries_fts_delete AFTER DELETE ON entries BEGIN
+  DELETE FROM entries_fts WHERE rowid = old.internal_id;
+END;
+"#;
+
+pub const ALL_TABLES: &[&str] = &[ENTRIES_TABLE, STATUS_SECTIONS_TABLE, FEATURES_TABLE, MEMORY_JOURNAL_PROVENANCE_TABLE, ENTRIES_FTS_TABLE];
+
+/// Helper: install the full per-scope schema on a fresh `.db` file. Called by:
+/// - Phase 3's bootstrap flow when `aletheia-v2 setup` mints a new scope
+/// - Phase 8's `migrate_from_v1` orchestrator when partitioning a V1 namespace into a V2 scope DB
+/// Idempotent (each table uses `CREATE TABLE IF NOT EXISTS`).
+pub fn install_all(conn: &rusqlite::Connection) -> crate::error::Result<()> {
+    for ddl in ALL_TABLES {
+        conn.execute_batch(ddl)?;
+    }
+    conn.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_USER_VERSION))?;
+    Ok(())
+}
 ```
 
 **Registry schema (`src/db/registry_schema.rs` — LOCKED in Phase 2):**
@@ -802,7 +857,14 @@ CREATE TABLE IF NOT EXISTS session_locks (
   session_id TEXT PRIMARY KEY,
   active_pid INTEGER NOT NULL,
   hostname TEXT NOT NULL,
-  active_feature_id TEXT,                                 -- one active feature per session at a time
+  active_feature_id TEXT,                                       -- one active feature per session at a time
+  -- Active project / active context state (Phase 5 active_context_tools reads/writes these):
+  active_project_id TEXT,                                       -- scope_id of active project (per Q6)
+  active_project_source TEXT,                                   -- "explicit" | "feature" | "primary" | "cwd" | "inferred"
+  active_project_expires_at TIMESTAMP,                          -- TTL gate; NULL = no expiry
+  active_context_tags_json TEXT,                                -- JSON array of context tags
+  active_context_source TEXT,                                   -- "explicit_override" | "feature_tags" | "project_tags" | "inferred"
+  active_context_expires_at TIMESTAMP,
   claimed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_heartbeat_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(session_id) REFERENCES session_bindings(session_id) ON DELETE CASCADE
@@ -966,6 +1028,18 @@ pub const ALL_REGISTRY_TABLES: &[&str] = &[
     MIGRATION_STATE_TABLE,
     MIGRATION_SCOPE_PROGRESS_TABLE,
 ];
+
+/// Helper: install the full registry schema on a fresh `scope_registry.db`. Called by:
+/// - Phase 3's bootstrap flow (`aletheia-v2 setup`)
+/// - Phase 8's `migrate_from_v1` orchestrator on the V2 target directory
+/// Idempotent (each table uses `CREATE TABLE IF NOT EXISTS`; trigger DDL is also IF NOT EXISTS).
+pub fn install_all(conn: &rusqlite::Connection) -> crate::error::Result<()> {
+    for ddl in ALL_REGISTRY_TABLES {
+        conn.execute_batch(ddl)?;
+    }
+    conn.execute_batch(&format!("PRAGMA user_version = {}", REGISTRY_USER_VERSION))?;
+    Ok(())
+}
 ```
 
 **ATTACH connection management (`src/db/connection.rs`):**
@@ -1233,16 +1307,16 @@ pub fn migration_for_version(target: u32) -> Option<&'static str> {
 **Phase 3 (Auth + Sessions) and Phase 4 (MCP Server Core + Hook Endpoint) can run in parallel** — they share no files. Both depend only on Phase 2's storage layer.
 
 **Phase 3 sub-tasks** (5 parallel):
-1. Keys (`src/auth/keys.rs`): file management at `~/.aletheia/keys/<name>.key` (mode 0600) + SHA-256 hash + DB metadata insert into `keys` table
+1. Keys (`src/auth/keys.rs`): file management at `~/.aletheia-v2/keys/<name>.key` (mode 0600) + SHA-256 hash + DB metadata insert into `keys` table
 2. Session bindings (`src/auth/sessions.rs`): bind/lookup/cleanup for `session_bindings` table
 3. Session locks + heartbeat (`src/auth/locks.rs`): claim/release/heartbeat-bg-task on `session_locks` table; FATAL on live conflict, orphan-recovery on stale (60s/180s defaults)
 4. Claim flow (`src/auth/claim.rs`): `claim(key_value)` → SHA-256 → lookup in `keys` → return `PermissionSet`; `whoami`; `refresh_claim` (called by every write handler)
-5. SessionStart hooks (`hooks/unix/sessionstart-bind.sh` + `hooks/windows/sessionstart-bind.js`): parse stdin JSON for `session_id`, write to `~/.aletheia/sessions/<my_pid>.session_id` (mode 0600)
+5. SessionStart hooks (`hooks/unix/sessionstart-bind.sh` + `hooks/windows/sessionstart-bind.js`): parse stdin JSON for `session_id`, write to `~/.aletheia-v2/sessions/<my_pid>.session_id` (mode 0600)
 
 **Phase 4 sub-tasks** (4 parallel):
 1. rmcp setup (`src/server/mcp.rs`): tool registration framework using `#[tool]` macros + `schemars`
 2. Server lifecycle (`src/server/index.rs`): bootstrap, MCP `initialize` handshake, graceful shutdown — also establishes the **Registrar pattern** for danger-file mitigation (each later phase adds `register_X()` call here)
-3. Cross-platform IPC (`src/server/transport.rs`): `interprocess` v2 wrapper for Unix sockets / Windows named pipes at `~/.aletheia/sockets/aletheia-<pid>.sock` (V1 hybrid preserved)
+3. Cross-platform IPC (`src/server/transport.rs`): `interprocess` v2 wrapper for Unix sockets / Windows named pipes at `~/.aletheia-v2/sockets/aletheia-<pid>.sock` (V1 hybrid preserved)
 4. HTTP endpoint server (`src/server/hook_endpoints.rs`): `/state`, `/context`, `/handoff`, `/session-info`, `/health`, `/reset-frequency` endpoints (V1 hook injection compat) — payloads in JSON (Q2)
 
 **Coordination point between Phases 3 & 4:** The MCP server (Phase 4) needs to know about session_id discovery (Phase 3 task 5) to perform auto-reclaim on startup. Phase 4 task 2 (server lifecycle) should expose a hook function that Phase 3 task 5 can call. Recommend Phase 3 task 5 be sequenced last so Phase 4 task 2 has the receiving function ready.
@@ -1263,16 +1337,16 @@ Implement the complete authentication + session-management layer: key file manag
 
 ### Prerequisites
 - Phase 2 complete: `scope_registry.db` schema applied (with `keys`, `session_bindings`, `session_locks` tables); `ConnectionManager::open_registry` works
-- `~/.aletheia/keys/`, `~/.aletheia/sessions/`, `~/.aletheia/sockets/`, `~/.aletheia/scopes/`, `~/.aletheia/sdk-runtime/` directories created (Phase 3 task: bootstrap also creates these if missing)
+- `~/.aletheia-v2/keys/`, `~/.aletheia-v2/sessions/`, `~/.aletheia-v2/sockets/`, `~/.aletheia-v2/scopes/`, `~/.aletheia-v2/sdk-runtime/` directories created (Phase 3 task: bootstrap also creates these if missing)
 - `Settings::session_locks` (heartbeat_seconds=60, stale_threshold_seconds=180) and `Settings::scopes` (session_orphan_sweep_minutes=5) defaults loaded
 
 ### Implementation
 
-<mandatory>Raw key values (the 64-char hex strings) MUST NEVER be persisted to the database. Only `key_hash = SHA-256(raw_key_value)` is stored in `keys.key_hash`. The raw value lives only in `~/.aletheia/keys/<name>.key` (file mode 0600). `claim(key_value)` hashes the input on receipt and looks up by `key_hash`. If the file is deleted, the key is unrecoverable (hash → raw is one-way).</mandatory>
+<mandatory>Raw key values (the 64-char hex strings) MUST NEVER be persisted to the database. Only `key_hash = SHA-256(raw_key_value)` is stored in `keys.key_hash`. The raw value lives only in `~/.aletheia-v2/keys/<name>.key` (file mode 0600). `claim(key_value)` hashes the input on receipt and looks up by `key_hash`. If the file is deleted, the key is unrecoverable (hash → raw is one-way).</mandatory>
 
 <mandatory>Session locks default to 60s heartbeat / 180s stale threshold (per CEO Item 9). On new claim against an existing lock with `last_heartbeat_at > NOW - 180s`: FATAL refusal with `<error code="SESSION_LOCKED" pid=X hostname=Y>`. On stale heartbeat: orphan-recovery (UPDATE row, log `lock_orphan_recovered` audit event). Graceful shutdown DELETEs the row; crash leaves the row for recovery.</mandatory>
 
-<mandatory>The SessionStart hook MUST write `~/.aletheia/sessions/<my_pid>.session_id` as **single-line plain text** (UUID + newline only — no JSON wrapper) with file mode **0600**. The MCP server reads `~/.aletheia/sessions/<my_ppid>.session_id` at startup with up to 2s polling (100ms backoff) for the race where MCP starts before hook completes. Falls back to no-auto-reclaim if not found — graceful degradation, user calls `claim(key)` explicitly.</mandatory>
+<mandatory>The SessionStart hook MUST write `~/.aletheia-v2/sessions/<my_pid>.session_id` as **single-line plain text** (UUID + newline only — no JSON wrapper) with file mode **0600**. The MCP server reads `~/.aletheia-v2/sessions/<my_ppid>.session_id` at startup with up to 2s polling (100ms backoff) for the race where MCP starts before hook completes. Falls back to no-auto-reclaim if not found — graceful degradation, user calls `claim(key)` explicitly.</mandatory>
 
 **Module structure (added in Phase 3):**
 
@@ -1729,13 +1803,13 @@ pub async fn refresh_claim(conn: Arc<Mutex<Connection>>, key_hash: &KeyHash) -> 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-# Read JSON from stdin; extract session_id; write to ~/.aletheia/sessions/<my_pid>.session_id
+# Read JSON from stdin; extract session_id; write to ~/.aletheia-v2/sessions/<my_pid>.session_id
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
 if [ -z "$SESSION_ID" ]; then
   exit 0  # Silently no-op if session_id missing (graceful degradation)
 fi
-SESSIONS_DIR="${ALETHEIA_DATA_DIR:-$HOME/.aletheia}/sessions"
+SESSIONS_DIR="${ALETHEIA_DATA_DIR:-$HOME/.aletheia-v2}/sessions"
 mkdir -p "$SESSIONS_DIR"
 chmod 700 "$SESSIONS_DIR" 2>/dev/null || true
 TARGET="$SESSIONS_DIR/$$.session_id"
@@ -1759,7 +1833,7 @@ process.stdin.on('end', () => {
   let sessionId;
   try { sessionId = JSON.parse(buf).session_id; } catch { return; }
   if (!sessionId) return;
-  const dataDir = process.env.ALETHEIA_DATA_DIR || path.join(os.homedir(), '.aletheia');
+  const dataDir = process.env.ALETHEIA_DATA_DIR || path.join(os.homedir(), '.aletheia-v2');
   const sessionsDir = path.join(dataDir, 'sessions');
   fs.mkdirSync(sessionsDir, { recursive: true });
   const target = path.join(sessionsDir, `${process.pid}.session_id`);
@@ -1814,7 +1888,7 @@ fn pid_alive(_pid: i32) -> bool { /* OpenProcess + GetExitCodeProcess pattern */
 ```
 
 <guidance>
-**On the SessionStart hook race:** The hook fires BEFORE the MCP server starts (it's a CC `SessionStart` event, dispatched by CC at session boot). The MCP server is also spawned at session boot via the user's MCP config. There's a race between "hook completes writing the file" and "MCP server starts reading the file." The 2s polling window with 100ms backoff (20 attempts) tolerates the race. If the hook never runs (e.g., user hasn't installed it via `aletheia setup`), discovery returns None and the session falls back to explicit `claim(key)` — the user just sees a slightly degraded UX (no auto-reclaim until next `--resume`).
+**On the SessionStart hook race:** The hook fires BEFORE the MCP server starts (it's a CC `SessionStart` event, dispatched by CC at session boot). The MCP server is also spawned at session boot via the user's MCP config. There's a race between "hook completes writing the file" and "MCP server starts reading the file." The 2s polling window with 100ms backoff (20 attempts) tolerates the race. If the hook never runs (e.g., user hasn't installed it via `aletheia-v2 setup`), discovery returns None and the session falls back to explicit `claim(key)` — the user just sees a slightly degraded UX (no auto-reclaim until next `--resume`).
 
 **On Windows PID checks:** The `pid_alive` function uses `OpenProcess` + `GetExitCodeProcess` (returns STILL_ACTIVE). Use the `windows-sys` crate or `windows` crate; the exact dependency choice is a Phase 3 sub-task implementation detail.
 
@@ -1822,7 +1896,7 @@ fn pid_alive(_pid: i32) -> bool { /* OpenProcess + GetExitCodeProcess pattern */
 
 **On audit-log dependency for write paths:** Every `audit_log::emit_event` call writes to `scope_registry.db`. The `claim()` function takes a `Connection` reference — that's the registry connection. Phase 4's server lifecycle holds this connection long-lived.
 
-**On master key and bootstrap:** Phase 3 includes the `bootstrap` MCP tool (creates a master key for first-run setup). The master key is generated via `generate_key()`, written to `~/.aletheia/keys/master.key` (mode 0600), inserted into `keys` with `is_master_key=1`. The user records the value and DELETES the file (or leaves it for solo use). The CLI subcommand `aletheia setup` is the alternative interface for first-run.
+**On master key and bootstrap:** Phase 3 includes the `bootstrap` MCP tool (creates a master key for first-run setup). The master key is generated via `generate_key()`, written to `~/.aletheia-v2/keys/master.key` (mode 0600), inserted into `keys` with `is_master_key=1`. The user records the value and DELETES the file (or leaves it for solo use). The CLI subcommand `aletheia-v2 setup` is the alternative interface for first-run.
 </guidance>
 
 ### Integration Points
@@ -1832,7 +1906,7 @@ fn pid_alive(_pid: i32) -> bool { /* OpenProcess + GetExitCodeProcess pattern */
   - `lock.lock_acquired`, `lock.lock_released`, `lock.lock_orphan_recovered`, `lock.lock_fatal_conflict`, `lock.heartbeat_stolen`
   - `key.key_issued`, `key.key_modified`, `key.key_rotated`, `key.digest_key_created`
 - **Phase 4 coordination:** The MCP server's startup calls `sessions::discover_session_id_via_ppid()` then `claim(key_value, Some(session_id))` (key_value loaded from key file specified in env or config). Server shutdown calls `locks::release(lock_handle)` from a graceful-shutdown signal handler.
-- **Phase 8 (V1→V2 migration):** Migration tool inserts records into `keys` table preserving V1 key UUIDs as `key_id`, computing `key_hash` from V1 raw key values read from `~/.aletheia/keys/<name>.key` files. V1's revoked-flag column maps directly to V2's `revoked_at` (timestamp NOW for V1's `revoked=1` rows; NULL otherwise).
+- **Phase 8 (V1→V2 migration):** Migration tool inserts records into `keys` table preserving V1 key UUIDs as `key_id`, computing `key_hash` from V1 raw key values read from `~/.aletheia-v2/keys/<name>.key` files. V1's revoked-flag column maps directly to V2's `revoked_at` (timestamp NOW for V1's `revoked=1` rows; NULL otherwise).
 
 ### Expected Outcomes
 - `cargo test` passes for all auth modules
@@ -1841,7 +1915,7 @@ fn pid_alive(_pid: i32) -> bool { /* OpenProcess + GetExitCodeProcess pattern */
 - Concurrent-claim test: two `claim()` calls with the same `session_id` from different process IDs — second receives `LockAcquireResult::Conflict`
 - Stale-claim recovery: insert lock row with `last_heartbeat_at = NOW - 200s`, call `claim()` — succeeds with `lock_orphan_recovered` audit event
 - Heartbeat task test: acquire lock, wait 65s, verify `last_heartbeat_at` updated within ±5s tolerance
-- SessionStart hook test (Unix): pipe JSON `{"session_id": "abc"}` to `sessionstart-bind.sh`, verify `~/.aletheia/sessions/<pid>.session_id` exists, contains "abc\n", mode 0600
+- SessionStart hook test (Unix): pipe JSON `{"session_id": "abc"}` to `sessionstart-bind.sh`, verify `~/.aletheia-v2/sessions/<pid>.session_id` exists, contains "abc\n", mode 0600
 - `discover_session_id_via_ppid()` test: write a fake `<test_ppid>.session_id` file, call discovery, verify returns the session_id; rename file, call discovery — returns None after 2s
 - `sweep_session_id_orphans()` test: create 3 session_id files (1 with current PID, 2 with bogus), call sweep, verify 2 removed
 
@@ -1866,7 +1940,7 @@ fn pid_alive(_pid: i32) -> bool { /* OpenProcess + GetExitCodeProcess pattern */
 
 <mandatory>All checklist items must be verified before proceeding.</mandatory>
 
-- [ ] `~/.aletheia/keys/<name>.key` files have mode 0600 (verified via `stat -c "%a"` on Unix)
+- [ ] `~/.aletheia-v2/keys/<name>.key` files have mode 0600 (verified via `stat -c "%a"` on Unix)
 - [ ] `keys.key_hash` is the SHA-256 of the raw key value (verified by hashing a known key value and matching the column)
 - [ ] **Raw key value NEVER appears in `keys` table** — grep `src/auth/` for any INSERT or UPDATE that includes `raw.0` going into `keys.key_value` or similar (must be absent)
 - [ ] `claim(invalid_key)` returns `Auth("Invalid key")` not a panic
@@ -1877,7 +1951,7 @@ fn pid_alive(_pid: i32) -> bool { /* OpenProcess + GetExitCodeProcess pattern */
 - [ ] `LockHandle::release()` (graceful) deletes the lock row + emits `lock_released` audit event
 - [ ] `LockHandle::Drop` aborts heartbeat task without deleting row (intentional — crash semantic)
 - [ ] SessionStart hook (`hooks/unix/sessionstart-bind.sh`) is executable (mode 0755) and parses JSON stdin correctly
-- [ ] SessionStart hook writes `~/.aletheia/sessions/<pid>.session_id` with mode 0600, single-line UUID + newline (NO JSON wrapper)
+- [ ] SessionStart hook writes `~/.aletheia-v2/sessions/<pid>.session_id` with mode 0600, single-line UUID + newline (NO JSON wrapper)
 - [ ] `discover_session_id_via_ppid` returns the session_id within 2s when the file exists; returns None after 2s polling timeout if absent
 - [ ] `sweep_session_id_orphans` removes files for non-existent PIDs without error
 - [ ] Audit log entries written for: `auth.claim`, `lock.lock_acquired`, `lock.lock_released`, `lock.lock_fatal_conflict`, `lock.lock_orphan_recovered` (verify by query against `sys_audit_log`)
@@ -1885,7 +1959,7 @@ fn pid_alive(_pid: i32) -> bool { /* OpenProcess + GetExitCodeProcess pattern */
 - [ ] Run context compaction (`/lethe compact`) before launching Phase 5 (which heavily depends on this auth flow)
 
 ### Known Risks
-- **Hook installation is user-managed:** The `aletheia setup` CLI subcommand is responsible for adding the SessionStart hook entry to the user's `~/.claude/settings.json`. If the user installs Aletheia via npm but doesn't run `setup`, hooks aren't registered → no SessionStart event → no auto-reclaim. Document in install instructions (Phase 10).
+- **Hook installation is user-managed:** The `aletheia-v2 setup` CLI subcommand is responsible for adding the SessionStart hook entry to the user's `~/.claude/settings.json`. If the user installs Aletheia via npm but doesn't run `setup`, hooks aren't registered → no SessionStart event → no auto-reclaim. Document in install instructions (Phase 10).
 - **CC `SessionStart` JSON schema stability:** The hook script parses `session_id` from a CC-controlled JSON shape. If CC changes the field name, the hook silently no-ops (graceful degradation, but auto-reclaim breaks). Phase 9's reconciliation can include a "SessionStart hook health" check.
 - **Heartbeat task lifecycle vs server shutdown:** If the server's tokio runtime drops before `release()` is called, `Drop` aborts the heartbeat but doesn't release the row. Recommend explicit `release()` from a `tokio::signal::ctrl_c()` handler in Phase 4's server lifecycle.
 - **Multi-host clock skew:** `session_locks.last_heartbeat_at` uses `CURRENT_TIMESTAMP` from the DB host (the writer). If two MCP servers are on different machines with skewed clocks, stale-detection becomes inaccurate. V2 default 60s/180s tolerates ~30s skew; document this in operational notes.
@@ -1898,7 +1972,7 @@ Phase 5 (Tools) is the largest phase by tool count. Auth integration is the gati
 
 The `audit_log::emit_event` vocabulary established here in Phase 3 will be extended in Phase 5 (`scope.*`, `key.*` mutations) and Phase 7 (`digest.*`, `mass_ingest.*`). Make the `AuditEventCategory` and `event_type` literals into constants in `src/types/audit.rs` so typos surface at compile time.
 
-The `bootstrap` and `setup` flows (CLI subcommand vs MCP tool) overlap. Recommend: CLI `aletheia setup` does first-run installer (creates dirs, generates settings.toml from defaults, writes hook config to `~/.claude/settings.json`, mints master key). MCP `bootstrap(name)` (called from inside a session) creates a NAMED sub-key + scope (carried over from V1 semantics).
+The `bootstrap` and `setup` flows (CLI subcommand vs MCP tool) overlap. Recommend: CLI `aletheia-v2 setup` does first-run installer (creates dirs, generates settings.toml from defaults, writes hook config to `~/.claude/settings.json`, mints master key). MCP `bootstrap(name)` (called from inside a session) creates a NAMED sub-key + scope (carried over from V1 semantics).
 </guidance>
 </core>
 </section>
@@ -2069,7 +2143,7 @@ impl ServerHandler for AletheiaServer {
             protocol_version: rmcp::model::ProtocolVersion::default(),
             capabilities: rmcp::model::ServerCapabilities::builder().enable_tools().build(),
             server_info: rmcp::model::Implementation {
-                name: "aletheia".into(),
+                name: "aletheia-v2".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
             },
             instructions: Some("Aletheia V2 — structured memory MCP server".into()),
@@ -2086,7 +2160,7 @@ pub async fn run_mcp_stdio(
         conn,
         settings,
         claimed: Arc::new(Mutex::new(claimed)),
-        data_dir: dirs::home_dir().unwrap().join(".aletheia"),  // simplified
+        data_dir: dirs::home_dir().unwrap().join(".aletheia-v2"),  // simplified
     };
     let service = server.serve(rmcp::transport::stdio()).await
         .map_err(|e| crate::error::AletheiaError::Other(format!("MCP serve: {}", e)))?;
@@ -2105,7 +2179,7 @@ use std::path::{Path, PathBuf};
 
 pub fn socket_path(data_dir: &Path) -> PathBuf {
     let pid = std::process::id();
-    data_dir.join("sockets").join(format!("aletheia-{}.sock", pid))
+    data_dir.join("sockets").join(format!("aletheia-v2-{}.sock", pid))
 }
 
 /// Bind a Unix socket / Windows named pipe at the per-PID path. Cleans up stale files first.
@@ -2286,7 +2360,7 @@ pub async fn wait_for_shutdown_signal() {
 
 **On hyper vs handcrafted HTTP:** The endpoint server's HTTP parsing in the example above is intentionally minimal (single-line GET). For a few well-known endpoints, this is fine. If complexity grows (POST bodies, query strings beyond paths), pull in `hyper` (workspace dep) and use it over `interprocess`'s listener via a custom `Service`.
 
-**On the per-cwd socket pointer file:** V1 writes `~/.aletheia/sockets/claude-<PPID>.sock.path` so hooks can find the socket without scanning. V2 preserves this convention. The hook scripts (Phase 6) read the pointer file → actual socket path → curl --unix-socket.
+**On the per-cwd socket pointer file:** V1 writes `~/.aletheia-v2/sockets/claude-<PPID>.sock.path` so hooks can find the socket without scanning. V2 preserves this convention. The hook scripts (Phase 6) read the pointer file → actual socket path → curl --unix-socket.
 
 **On rmcp `#[tool]` macro evolution:** rmcp 1.5.x's macro signature has been changing. The example above uses `#[tool(tool_box)]` on the impl block + `#[tool(description = "...")]` on each function. Verify against the rmcp version pinned in Cargo.toml at implementation time; if the macro API has changed, adapt — the pattern is well-documented in rmcp examples.
 
@@ -2302,15 +2376,15 @@ pub async fn wait_for_shutdown_signal() {
 
 ### Expected Outcomes
 - `cargo build` succeeds; `cargo test` passes
-- `aletheia serve` starts the MCP server; `claude` CLI configured to use it can connect, perform `tools/list` MCP request, get back `{ "tools": [] }` (empty — Phase 5 fills this in)
-- A `curl --unix-socket ~/.aletheia/sockets/aletheia-<pid>.sock http://localhost/health` returns `{"status":"ok","pid":<pid>}`
+- `aletheia-v2 serve` starts the MCP server; `claude` CLI configured to use it can connect, perform `tools/list` MCP request, get back `{ "tools": [] }` (empty — Phase 5 fills this in)
+- A `curl --unix-socket ~/.aletheia-v2/sockets/aletheia-<pid>.sock http://localhost/health` returns `{"status":"ok","pid":<pid>}`
 - `curl --unix-socket ... http://localhost/state` returns `{}` (stub)
 - SIGTERM to the server triggers shutdown handler; lock row deleted from `session_locks`; pointer file removed
 - `tracing` output goes to stderr; stdout shows ONLY MCP protocol JSON-RPC frames
-- Server starts even if no `~/.aletheia/sessions/<my_ppid>.session_id` exists (graceful degradation — `claimed = None`, but server runs and accepts MCP)
+- Server starts even if no `~/.aletheia-v2/sessions/<my_ppid>.session_id` exists (graceful degradation — `claimed = None`, but server runs and accepts MCP)
 
 ### Testing Recommendations
-- E2E test: spawn `aletheia serve` as subprocess; connect with a minimal MCP client (rmcp's client API or a TypeScript MCP client); verify `tools/list` returns empty list
+- E2E test: spawn `aletheia-v2 serve` as subprocess; connect with a minimal MCP client (rmcp's client API or a TypeScript MCP client); verify `tools/list` returns empty list
 - Hook endpoint tests: bind socket, curl each endpoint, verify JSON shape
 - Stdio purity test: capture stdout during a server lifecycle that exercises every code path (claim, lock, audit log writes); verify stdout contains ONLY valid MCP JSON-RPC frames (no garbage)
 - Shutdown handler test: spawn server, send SIGTERM, verify lock row is deleted within 5s
@@ -2333,15 +2407,15 @@ pub async fn wait_for_shutdown_signal() {
 - [ ] `cargo build` succeeds; `cargo test` passes for all server modules
 - [ ] `tracing-subscriber` configured to write **stderr only**; stdout used exclusively by rmcp protocol
 - [ ] Grep `src/server/` for `println!`, `print!`, `dbg!` — all absent (would corrupt MCP stdio JSON-RPC)
-- [ ] `aletheia serve` starts and accepts MCP client connections
+- [ ] `aletheia-v2 serve` starts and accepts MCP client connections
 - [ ] MCP `tools/list` returns empty list (Phase 5 fills in)
-- [ ] Hook endpoint server binds at `~/.aletheia/sockets/aletheia-<pid>.sock` with mode 0600
-- [ ] Per-PID pointer file `~/.aletheia/sockets/claude-<PPID>.sock.path` written with the actual socket path (V1 hook compat)
+- [ ] Hook endpoint server binds at `~/.aletheia-v2/sockets/aletheia-<pid>.sock` with mode 0600
+- [ ] Per-PID pointer file `~/.aletheia-v2/sockets/claude-<PPID>.sock.path` written with the actual socket path (V1 hook compat)
 - [ ] `curl --unix-socket ... http://localhost/health` returns `{"status":"ok","pid":<pid>}`
 - [ ] `curl --unix-socket ... http://localhost/state` returns `{}` (stub for now)
 - [ ] `curl --unix-socket ... http://localhost/session-info` returns claim status JSON
 - [ ] SIGTERM triggers graceful shutdown: lock row deleted, socket + pointer files removed, audit log entry `lock_released` written
-- [ ] Server starts cleanly with no `~/.aletheia/sessions/<ppid>.session_id` file (graceful degradation; `claimed = None`; server runs and accepts MCP without auto-reclaim)
+- [ ] Server starts cleanly with no `~/.aletheia-v2/sessions/<ppid>.session_id` file (graceful degradation; `claimed = None`; server runs and accepts MCP without auto-reclaim)
 - [ ] Server starts cleanly with a valid session_id discovery file: `claimed = Some(ClaimedSession)`, `auth.auto_reclaim` audit event written
 - [ ] **Registrar pattern verified:** `start_server()` body contains the commented-out `register_X` lines for Phases 5-9. Adding/uncommenting a line is the entire integration step for those phases.
 - [ ] `src/server/tools/mod.rs` stubs all tool category submodules: `pub mod auth; pub mod entries; pub mod journal; pub mod memory; pub mod status; pub mod handoff; pub mod discovery; pub mod system; pub mod features; pub mod query; pub mod active_context;` — files exist as empty stubs, Phase 5 fills them
@@ -2465,10 +2539,12 @@ use crate::types::scope::ScopeId;
 use crate::server::response_format::XmlElement;
 
 /// Built once per tool invocation from `AletheiaServer.claimed`.
-/// Provides the standard auth + migration check before any tool body runs.
+/// Provides the standard auth + migration check + tool-deprecation check before any tool body runs.
 pub struct AuthContext<'a> {
     pub conn: Arc<Mutex<Connection>>,
     pub session: &'a ClaimedSession,
+    pub tool_name: &'static str,                                // injected by the #[tool] handler wrapper
+    pub deprecation_tracker: &'a crate::server::deprecation::UsageDedupTracker,  // shared per-server
 }
 
 impl<'a> AuthContext<'a> {
@@ -2481,7 +2557,17 @@ impl<'a> AuthContext<'a> {
         )?;
         if in_progress { return Err(AletheiaError::MigrationInProgress); }
 
-        // 2. Refresh claim — checks revocation
+        // 2. Tool deprecation check — emits dedup'd usage event for deprecated tools;
+        //    returns Err(ToolRemoved) for tools marked removed (Phase 9 deprecation lifecycle).
+        crate::server::deprecation::check_and_log(
+            &c,
+            self.tool_name,
+            self.session.session_id.as_deref(),
+            self.deprecation_tracker,
+        )?;
+
+        // 3. Refresh claim — checks revocation
+        drop(c);  // release lock before awaiting refresh_claim (which re-acquires)
         let _ = crate::auth::claim::refresh_claim(self.conn.clone(), &self.session.key_record.key_hash).await?;
         Ok(())
     }
@@ -2965,13 +3051,13 @@ pub struct SetActiveContextParams {
 ```
 
 Implementation notes:
-- Active project/context state lives in `session_locks` columns added in Phase 5 (extension to existing schema is OK since Phase 2's mandatory was for registry tables; but adding columns to existing tables IS a registry-schema change). **Resolution:** add `active_project_id`, `active_project_source`, `active_project_expires_at`, `active_context_tags_json`, `active_context_source`, `active_context_expires_at` to `session_locks` in Phase 2's `registry_schema.rs` — DOC the additions there, don't violate the "Phase 2 fully specifies registry" mandate retroactively. Phase 5 just READs/UPDATEs these columns.
+- Active project/context state lives in `session_locks` columns defined in Phase 2's `registry_schema.rs::SESSION_LOCKS_TABLE` (`active_project_id`, `active_project_source`, `active_project_expires_at`, `active_context_tags_json`, `active_context_source`, `active_context_expires_at`, plus `active_feature_id` for the feature lifecycle). Phase 5's tools READ/UPDATE these columns; no schema modification needed.
 - `set_active_project(scope_id_or_tag)` UPDATEs `session_locks` for current session. Auto-resets `active_context_tags_json` to project's tags (queried from scope's existing memories' tag frequency or a `scopes.metadata.project_tags` field).
 - `set_active_context(tags)` checks tag overlap with active project's tags. If zero overlap: response includes `<warn code="CONTEXT_PROJECT_MISMATCH" active_project_tags=[...] requested_tags=[...] message="..."/>`.
 - TTL enforced: when reading active project/context (e.g., during hook injection in Phase 6), check `expires_at < NOW`; if expired, treat as cleared.
 - `clear_*` tools just NULL the columns.
 
-**Important Phase 2 amendment** — the columns `active_project_id`, `active_project_source`, `active_project_expires_at`, `active_context_tags_json`, `active_context_source`, `active_context_expires_at`, and `active_feature_id` MUST be defined in `src/db/registry_schema.rs::SESSION_LOCKS_TABLE` in Phase 2. Phase 5 only reads/writes them. Update Phase 2's `SESSION_LOCKS_TABLE` constant accordingly. (This was missed in the original Phase 2 SQL above — flag in CR-2 for retroactive amendment.)
+**Phase 2 schema reference** — `SESSION_LOCKS_TABLE` (in `src/db/registry_schema.rs`) defines all `active_project_*`, `active_context_*`, and `active_feature_id` columns. Phase 5's `active_context_tools` is a pure read/write consumer — no schema modification.
 
 **Tool registration (`src/server/tools/mod.rs`):**
 
@@ -3004,7 +3090,7 @@ CREATE TRIGGER IF NOT EXISTS trg_entries_fts_update AFTER UPDATE ON entries BEGI
   UPDATE entries_fts SET content = new.content WHERE rowid = new.internal_id;
 END;
 ```
-Note: `entries_fts` is a per-scope table (lives in each scope's `.db`). The FTS5 trigger fires on every INSERT/UPDATE of `entries` — minor overhead, acceptable. Phase 5 amends Phase 2's schema to include this; document in CR-5.
+Note: `entries_fts` is a per-scope table (lives in each scope's `.db`). The FTS5 trigger fires on every INSERT/UPDATE of `entries` — minor overhead, acceptable. Defined in Phase 2's `ENTRIES_FTS_TABLE` constant. Phase 8's V1→V2 bulk migration disables the triggers temporarily (DROP TRIGGER + bulk INSERT + CREATE TRIGGER + single FTS5 rebuild) for 10-100× speedup on large corpora.
 
 **On the active_context_tools and session_locks columns:** This is the second retroactive Phase 2 amendment surfaced during Phase 5 design. Both should be flagged in CR-2 (or noted in this CR-5 as additions to be folded in during implementation). The mandatory in Phase 2 prevents NEW tables being added to registry by later phases — column additions to existing tables are gray area but should be made by amending Phase 2's constants directly, not by Phase 5 issuing ALTER TABLE.
 
@@ -3025,7 +3111,7 @@ Note: `entries_fts` is a per-scope table (lives in each scope's `.db`). The FTS5
 
 ### Expected Outcomes
 - `cargo test` passes for all tool modules (target: ~80% coverage on tool handlers — high coverage for the auth+migration precheck, lower for happy-path bodies)
-- `aletheia serve` starts; MCP `tools/list` returns 30+ tools (count matches expected — verify via test)
+- `aletheia-v2 serve` starts; MCP `tools/list` returns 30+ tools (count matches expected — verify via test)
 - E2E test: `claim` → `bootstrap` → `write_memory` → `read` → result includes write-routing metadata and the entry content
 - E2E test for two-call confirmation: `feature_init(name="A")` succeeds; `feature_init(name="B")` while A is active returns FEATURE_OVERLAP warn; `feature_init(name="B", confirm_table_current=true)` succeeds with `auto_tabled="A"` notice
 - E2E test for content_hash dedup: `write_memory(content="X")` succeeds; `write_memory(content="X")` again returns `<duplicate ...>` without inserting
@@ -3071,13 +3157,10 @@ Note: `entries_fts` is a per-scope table (lives in each scope's `.db`). The FTS5
 - [ ] `feature_init` name-collision test passes: re-init of abandoned feature name returns FEATURE_NAME_TAKEN error with hint
 - [ ] `query_past_state` returns the correct version for a given timestamp (test with 3-version chain)
 - [ ] `promote_memory` cross-scope move: source tombstoned with `promoted_to:` reason; target inserted; both visible via attached scopes
-- [ ] FTS5 virtual table created in scope DB schema (Phase 5 amendment to Phase 2's `scope_schema.rs`)
-- [ ] FTS5 sync triggers fire on entries INSERT/UPDATE
+- [ ] FTS5 virtual table + sync triggers present in scope DB (defined in Phase 2's `ENTRIES_FTS_TABLE` constant; install_all() applies them)
 - [ ] `set_active_context(tags=["other"])` with zero overlap with active project's tags returns CONTEXT_PROJECT_MISMATCH warn
-- [ ] **PHASE 2 RETROACTIVE AMENDMENTS verified:**
-  - [ ] `session_locks` table includes `active_feature_id`, `active_project_id`, `active_project_source`, `active_project_expires_at`, `active_context_tags_json`, `active_context_source`, `active_context_expires_at` columns (added to `src/db/registry_schema.rs::SESSION_LOCKS_TABLE` in Phase 2's constant — NOT via ALTER TABLE in Phase 5)
-  - [ ] `entries_fts` virtual table + sync triggers added to `src/db/scope_schema.rs` (Phase 2 constant amended)
-- [ ] **PHASE 4 RETROACTIVE FILE-CREATION verified:** `src/server/tools/auth_context.rs` and `src/db/append_only.rs` exist (created in Phase 5)
+- [ ] `session_locks` table contains all 7 active-* columns (`active_feature_id`, `active_project_id`, `active_project_source`, `active_project_expires_at`, `active_context_tags_json`, `active_context_source`, `active_context_expires_at`) — defined in Phase 2's `SESSION_LOCKS_TABLE` constant; Phase 5 reads/writes them
+- [ ] Phase 5 file creation: `src/server/tools/auth_context.rs` and `src/db/append_only.rs` exist (Phase 4 reserved the module slots; Phase 5 creates the files)
 - [ ] Audit events emitted by Phase 5: `scope.scope_created`, `scope.scope_retired`, `key.key_issued`, `key.key_modified`, `key.key_revoked`, `digest.feature_initiated`, `digest.feature_tabled`, `digest.feature_resumed`, `digest.feature_wrapped_up`, `digest.feature_abandoned`, `digest.feature_auto_tabled`, `digest.critical_entry_promotion_committed`
 - [ ] Run context compaction (`/lethe compact`) before launching Phases 6 + 7
 
@@ -3332,7 +3415,8 @@ impl ScoringEngine {
         total
     }
 
-    /// Top-K with threshold + token budget.
+    /// Top-K with threshold + token budget. Optionally observes the emitted ranking
+    /// for Shadow Mode comparison (Phase 9 wires the observer; V2 default observer is NoOp).
     /// Tie-break order: Memory > Journal, Recent > Older, Critical > Non-critical.
     pub fn top_k_filtered(
         &self,
@@ -3340,8 +3424,11 @@ impl ScoringEngine {
         context: &Context,
         threshold: f64,
         token_budget: u32,
+        shadow_observer: Option<&crate::shadow::observer::ShadowObserver>,
+        observation_metadata: Option<crate::shadow::observer::ObservationMetadata>,
     ) -> Vec<(Candidate, f64)> {
         use crate::types::entry::EntryClass;
+        let candidates_for_shadow = candidates.clone();  // cheap: Candidate has Arc-wrapped content; shadow only needs IDs
         let mut scored: Vec<(Candidate, f64)> = candidates.into_iter()
             .map(|c| { let s = self.score(&c, context); (c, s) })
             .filter(|(_, s)| *s >= threshold)
@@ -3357,13 +3444,21 @@ impl ScoringEngine {
                 .then_with(|| c2.critical_flag.cmp(&c1.critical_flag))  // critical first on tie
         });
         let mut budget_used = 0u32;
-        scored.into_iter()
+        let emitted: Vec<(Candidate, f64)> = scored.into_iter()
             .take_while(|(c, _)| {
                 if budget_used + c.estimated_tokens > token_budget { return false; }
                 budget_used += c.estimated_tokens;
                 true
             })
-            .collect()
+            .collect();
+
+        // Shadow Mode observation (V2 default ranker is NoOp; Phase 9 wiring; V3 plugs the real comparison ranker)
+        if let (Some(obs), Some(meta)) = (shadow_observer, observation_metadata) {
+            let emitted_ids: Vec<String> = emitted.iter().map(|(c, _)| c.entry_id.0.clone()).collect();
+            // Fire-and-forget; observer handles its own errors via tracing
+            let _ = obs.observe_sync(meta, &candidates_for_shadow, context, &emitted_ids);
+        }
+        emitted
     }
 }
 ```
@@ -3516,7 +3611,7 @@ The bash + JS hooks are direct ports from V1 — same socket discovery, same end
 #!/usr/bin/env bash
 set -euo pipefail
 PPID_VAL=$PPID
-SOCK_POINTER="${ALETHEIA_DATA_DIR:-$HOME/.aletheia}/sockets/claude-${PPID_VAL}.sock.path"
+SOCK_POINTER="${ALETHEIA_DATA_DIR:-$HOME/.aletheia-v2}/sockets/claude-${PPID_VAL}.sock.path"
 [ -f "$SOCK_POINTER" ] || exit 0
 SOCK=$(cat "$SOCK_POINTER")
 [ -S "$SOCK" ] || exit 0
@@ -3525,7 +3620,7 @@ RESPONSE=$(curl --max-time 2 --silent --unix-socket "$SOCK" http://localhost/sta
 echo "$RESPONSE"
 ```
 
-V1's hook scripts are nearly identical; the V2 changes are: (a) the `${ALETHEIA_DATA_DIR}` env var override (V1 hardcoded `~/.aletheia/`), (b) preserving `claude-${PPID}.sock.path` pointer file convention.
+V1's hook scripts are nearly identical; the V2 changes are: (a) the `${ALETHEIA_DATA_DIR}` env var override (V1 hardcoded `~/.aletheia-v2/`), (b) preserving `claude-${PPID}.sock.path` pointer file convention.
 
 **KG-stub verification (Phase 6 sub-task 6):**
 
@@ -3630,7 +3725,7 @@ Each location gets a `// IS-6 KG forward-compat seam #N — see docs/plans/desig
 4. Memory transform (`src/migrate/memory.rs`) — V1 `memory_entries` (active + archived) + `memory_versions` → V2 `entries` (entry_class=memory) with **V1.key → tag** + entry_id_legacy tag (Q5A)
 5. Status transform (`src/migrate/status.rs`) — V1 `status_documents` → V2 `entries` (entry_class=status) container; V1 `status_sections` → V2 `status_sections` with version=1
 6. Handoff transform (`src/migrate/handoff.rs`) — V1 `handoffs` → V2 `entries` (entry_class=handoff)
-7. Key migration (`src/migrate/keys.rs`) — V1 `keys` → V2 `keys` table; preserve V1 key_id, compute `key_hash` from raw values read from V1 key files (`~/.aletheia/keys/<name>.key`)
+7. Key migration (`src/migrate/keys.rs`) — V1 `keys` → V2 `keys` table; preserve V1 key_id, compute `key_hash` from raw values read from V1 key files (`~/.aletheia-v2/keys/<name>.key`)
 8. Lazy first-claim trigger marker (`src/migrate/marker.rs`) — set `scopes.digest_pending_v1_migration=1` per scope; first claim of each scope kicks off digest pass
 9. `migrate_from_v1` orchestrator (`src/migrate/orchestrator.rs`) — master-key gated; takes v1_db_path + confirm_backup_taken + dry_run; runs all transforms in one transaction per V2 .db; renames V1 DB to `*.bak`; writes migration report
 
@@ -3668,7 +3763,7 @@ Build the digest pipeline that replaces V1's tmux-spawned teammate with an SDK s
 
 <mandatory>The SDK subprocess MUST be spawned with `tokio::process::Command` configured `.kill_on_drop(true)` so a dropped child handle SIGKILLs the subprocess. Required for lease-expiry cleanup: when a lease expires mid-digest, the parent MCP server's lease-recovery logic ABORTs the spawn task; without `kill_on_drop`, the orphaned subprocess continues consuming tokens.</mandatory>
 
-<mandatory>The SDK subprocess cwd MUST be `~/.aletheia/sdk-runtime/<queue_id>/` (Q3). MCP server creates the directory with `mkdir -p` (idempotent — handles parallel digest spawns) before spawn; deletes on success commit; preserves on failure for forensics. Background sweeper (Phase 9) cleans orphans older than 24h.</mandatory>
+<mandatory>The SDK subprocess cwd MUST be `~/.aletheia-v2/sdk-runtime/<queue_id>/` (Q3). MCP server creates the directory with `mkdir -p` (idempotent — handles parallel digest spawns) before spawn; deletes on success commit; preserves on failure for forensics. Background sweeper (Phase 9) cleans orphans older than 24h.</mandatory>
 
 <mandatory>The digest_queue background poller MUST use the SQL `UPDATE ... WHERE status='pending' RETURNING *` pattern to atomically lease a queue row. Multiple MCP server processes race on this UPDATE; only one wins per row. NO `SELECT then UPDATE` race-prone pattern.</mandatory>
 
@@ -3957,7 +4052,7 @@ pub async fn run_digest(
     data_dir: &Path,
     job: &LeasedJob,
 ) -> Result<()> {
-    // 1. Prepare cwd: ~/.aletheia/sdk-runtime/<queue_id>/
+    // 1. Prepare cwd: ~/.aletheia-v2/sdk-runtime/<queue_id>/
     let cwd = data_dir.join("sdk-runtime").join(job.queue_id.to_string());
     std::fs::create_dir_all(&cwd)?;
 
@@ -3968,10 +4063,10 @@ pub async fn run_digest(
     };
 
     // 3. Build the inline MCP config pointing at the running parent MCP server's socket
-    let socket_path = data_dir.join("sockets").join(format!("aletheia-{}.sock", std::process::id()));
+    let socket_path = data_dir.join("sockets").join(format!("aletheia-v2-{}.sock", std::process::id()));
     let mcp_config = serde_json::json!({
         "mcpServers": {
-            "aletheia": {
+            "aletheia-v2": {
                 "command": std::env::current_exe()?.to_string_lossy(),  // re-invoke our own binary
                 "args": ["serve", "--socket-client", socket_path.to_string_lossy().to_string()],
                 "env": {
@@ -4094,7 +4189,7 @@ pub fn build_prompt(job: &LeasedJob, _settings: &Settings) -> Result<String> {
 fn base_role() -> &'static str {
     r#"You are the Aletheia Digest Agent — a background subprocess synthesizing memories from journal entries.
 
-You have access to ONLY these tools (via the MCP server registered as `aletheia`):
+You have access to ONLY these tools (via the MCP server registered as `aletheia-v2`):
 - mcp__aletheia__list_entries, read, search, list_tags, show_related (discovery)
 - mcp__aletheia__write_memory, retire_memory, read_memory_history (memory)
 - mcp__aletheia__write_journal (write your own journal of what you observed)
@@ -4379,13 +4474,13 @@ pub struct RequestMassIngestParams {
 ```
 
 <guidance>
-**On `--socket-client` mode:** The SDK subprocess's MCP config calls back into the SAME aletheia binary (`std::env::current_exe()`) with a `serve --socket-client <socket>` subcommand. This is a NEW subcommand we add — a thin client that proxies stdio MCP into Unix socket calls to the parent's MCP server. Phase 4 establishes the server side; Phase 7 adds the client subcommand. Alternative: spin up a fresh full MCP server in the subprocess (heavier; risks DB connection contention). The proxy is lighter and reuses the parent's existing SQLite connection.
+**On `--socket-client` mode:** The SDK subprocess's MCP config calls back into the SAME aletheia-v2 binary (`std::env::current_exe()`) with a `serve --socket-client <socket>` subcommand. This is a NEW subcommand we add — a thin client that proxies stdio MCP into Unix socket calls to the parent's MCP server. Phase 4 establishes the server side; Phase 7 adds the client subcommand. Alternative: spin up a fresh full MCP server in the subprocess (heavier; risks DB connection contention). The proxy is lighter and reuses the parent's existing SQLite connection.
 
 **On stdout/stderr draining:** The example uses concurrent `tokio::spawn` tasks for stdout and stderr. CRITICAL — if you call `child.wait()` without draining stdout/stderr, the OS pipe buffer fills (~64KB) and the subprocess blocks. The 3-task pattern (wait + stdout drain + stderr drain) is the safe way.
 
 **On lease TTL vs subprocess timeout:** Lease TTL (30min default; 3h for mass_ingest) is the database-level recovery time. The subprocess timeout (`tokio::time::timeout`) matches the lease TTL — they're the same value. If the subprocess hangs past the timeout, we kill it; the lease will expire shortly and the queue row re-leases (with retry_count++).
 
-**On digest key loading:** Each scope has a dedicated digest key (per design Topic 7). Phase 7's `load_digest_key_for_scope` queries `keys WHERE is_digest_key=1 AND digest_for_scope_id=?`, then reads the raw value from `~/.aletheia/keys/digest-<scope_uuid>.key`. Phase 5's auth tool surface includes `rotate_digest_key(scope_id)` for key rotation.
+**On digest key loading:** Each scope has a dedicated digest key (per design Topic 7). Phase 7's `load_digest_key_for_scope` queries `keys WHERE is_digest_key=1 AND digest_for_scope_id=?`, then reads the raw value from `~/.aletheia-v2/keys/digest-<scope_uuid>.key`. Phase 5's auth tool surface includes `rotate_digest_key(scope_id)` for key rotation.
 
 **On the digest agent's MCP key:** The subprocess authenticates as the digest key (passed via `ALETHEIA_DIGEST_KEY` env var; the socket-client subcommand reads this and calls `claim()` automatically on init). The digest key has narrow permissions: read journal/memory in own scope + readable ancestors; write memory in own scope; retire memory in own scope; update digested_at. NOT allowed: write to ancestors, create_key/modify_key, cross-scope writes (per design Topic 7).
 
@@ -4445,7 +4540,7 @@ pub struct RequestMassIngestParams {
 - [ ] **Digest agent prompt restricts tool surface** — agent prompt explicitly says it has access to ONLY `mcp__aletheia__*` tools; no Edit/Write/Bash/etc.
 - [ ] `register_digest_queue_poller` and `register_mass_ingest_poller` calls UNCOMMENTED in `src/server/index.rs::start_server()` (Registrar pattern).
 - [ ] Mass-ingest TTL expiry test passes: requests older than `expires_at` are marked status='expired' by poller.
-- [ ] SDK subprocess cwd at `~/.aletheia/sdk-runtime/<queue_id>/`; deleted on success commit; preserved on failure for forensics.
+- [ ] SDK subprocess cwd at `~/.aletheia-v2/sdk-runtime/<queue_id>/`; deleted on success commit; preserved on failure for forensics.
 - [ ] Audit events emitted: `digest.digest_queued`, `digest.digest_leased`, `digest.digest_committed`, `digest.digest_failed`, `digest.digest_retried`, `digest.digest_lease_recovered`, `digest.mass_ingest_requested`, `digest.mass_ingest_approved`, `digest.mass_ingest_denied`, `digest.mass_ingest_expired`, `digest.mass_ingest_started`, `digest.mass_ingest_checkpoint`, `digest.mass_ingest_completed`, `digest.mass_ingest_failed`.
 - [ ] `--socket-client` subcommand implemented in `src/main.rs` + thin proxy module — subprocess can connect back to parent MCP server via Unix socket.
 - [ ] Run context compaction (`/lethe compact`) before launching Phase 8 + Phase 9 (parallel pair).
@@ -4453,7 +4548,7 @@ pub struct RequestMassIngestParams {
 ### Known Risks
 - **Pipe-buffer deadlock if drain tasks are forgotten:** This is THE most common subprocess bug. The triple-task pattern (wait + stdout drain + stderr drain) is mandatory. CI test should specifically generate >64KB of subprocess output and verify the wait completes.
 - **`--socket-client` complexity:** This is non-trivial code (~150 lines for the proxy). If implementation hits problems, fallback: spin up a fresh full MCP server in the subprocess with its own connection to scope_registry.db. Costs more (extra DB connection) but avoids the proxy. Defer if needed; document in plan.
-- **Digest key file lookup:** If a scope's digest key file is missing or corrupted, the digest fails to start. Recommend: bootstrap creates a digest key per scope on `bootstrap`/scope_create; the file is at `~/.aletheia/keys/digest-<scope_uuid>.key` (mode 0600). Phase 9's reconciler can detect missing keys and emit warning audit events.
+- **Digest key file lookup:** If a scope's digest key file is missing or corrupted, the digest fails to start. Recommend: bootstrap creates a digest key per scope on `bootstrap`/scope_create; the file is at `~/.aletheia-v2/keys/digest-<scope_uuid>.key` (mode 0600). Phase 9's reconciler can detect missing keys and emit warning audit events.
 - **Approval polling latency:** 30s polling means up to 30s between supervisor `update_status(approved=true)` and digest enqueue. Acceptable per design; document in user-facing help.
 - **rmcp + `--socket-client` interaction:** The subprocess uses rmcp 1.5.x as MCP client; the `--socket-client` proxy is rmcp 1.5.x as MCP server on stdio. Both ends use the same crate version → compatibility guaranteed.
 - **Subprocess token cost not enforced server-side:** Even with `--model opus` (200k cap), a runaway agent could consume the full 200k. CC's per-session cost model handles this for the user, but Aletheia doesn't enforce additional limits. Documented as accepted in CEO Item 3.
@@ -4494,22 +4589,29 @@ Context management: Run `/lethe compact` before launching Phases 8 + 9.
 
 <core>
 ### Objective
-Implement `migrate_from_v1` — the one-shot tool that reads a V1 SQLite database (greenfield V2 has no V1 code reuse; this tool reads V1 as data) and produces V2's per-scope `.db` files + `scope_registry.db` rows, transforming V1's 2-level hierarchy (entries → typed children) into V2's flat per-row entries model. Per CEO Item 4: structural migration is one atomic transaction; the digest pass on imported entries is LAZY per-scope (runs at each scope's first claim in V2). After Phase 8, existing V1 installs can upgrade to V2 with `aletheia migrate-from-v1 <v1_db_path>`.
+Implement `aletheia-v2 migrate-from-v1` — the tool that reads a V1 SQLite database (greenfield V2 has no V1 code reuse; this tool reads V1 as data only) and produces V2's per-scope `.db` files + `scope_registry.db` rows in V2's separate data directory (`~/.aletheia-v2/`), transforming V1's 2-level hierarchy (entries → typed children) into V2's flat per-row entries model. **Side-by-side install model (per CEO pre-build review):** V1 stays untouched at `~/.aletheia-v2/`; V2 lives at `~/.aletheia-v2/`; both can run simultaneously; cutover is user-driven (uninstall V1 npm + remove V1 from CC settings) AFTER user validates V2. Per CEO Item 4: structural migration is one atomic transaction; the digest pass on imported entries is LAZY per-scope (runs at each scope's first claim in V2).
 
 ### Prerequisites
-- Phase 2 complete: per-scope schema + scope_registry schema; ConnectionManager + audit log helpers
-- Phase 3 complete: `keys` table operations; key file management at `~/.aletheia/keys/<name>.key`
-- Phase 7 complete: `digest_queue` table; first-claim handler can enqueue digest based on `scopes.digest_pending_v1_migration` flag
+- Phase 2 complete: per-scope schema + scope_registry schema; `install_all` helpers exist on `scope_schema` and `registry_schema` modules
+- Phase 3 complete: `keys` table operations; key file management at `~/.aletheia-v2/keys/<name>.key` (V2 path); SHA-256 hashing
+- Phase 7 complete: `digest_queue` table; first-claim handler reads `scopes.digest_pending_v1_migration` flag
+- **V2 setup completed first:** `aletheia-v2 setup` has run, generated V2 master key at `~/.aletheia-v2/keys/master.key`, created `~/.aletheia-v2/scope_registry.db`. The migration tool augments this V2 install with imported V1 data.
 
 ### Implementation
 
-<mandatory>`migrate_from_v1` MUST be master-key gated AND require `confirm_backup_taken=true`. Without both gates, the tool refuses with a clear error. Backup-confirmation is user acknowledgment (Aletheia doesn't verify the backup actually exists — that's the user's responsibility).</mandatory>
+<mandatory>`aletheia-v2 migrate-from-v1` MUST be V2-master-key gated AND require `--confirm-backup-taken`. Without both gates, the tool refuses with a clear error. Backup-confirmation is user acknowledgment (Aletheia doesn't verify the backup actually exists — that's the user's responsibility).</mandatory>
 
-<mandatory>The structural migration MUST be one atomic operation across ALL scopes. Per-scope `.db` files are created and populated within a single per-DB transaction. If any per-scope transform fails, ALL per-scope files are deleted (cleanup) and `scope_registry.db.migration_state` records the failure. The user re-runs from the V1 backup. Partial migration is FORBIDDEN.</mandatory>
+<mandatory>The structural migration MUST be one atomic operation across ALL scopes. Per-scope `.db` files are created and populated within a single per-DB transaction. If any per-scope transform fails, ALL V2 files created during this migration (per-scope `.db` files AND key files written by Phase 8's key migration sub-task) are deleted (cleanup) and `scope_registry.db.migration_state` records the failure. The user re-runs after fixing the cause. Partial migration is FORBIDDEN.</mandatory>
 
-<mandatory>The V1 database file is renamed to `<v1_db_path>.bak` (or `aletheia-v1-pre-migration.db.bak` if path naming conflicts) at the END of successful migration. NEVER deleted. The rename is the migration's commit point; if rename fails (e.g., disk full), migration_state records 'failed' but V2 .db files remain (admin removes manually).</mandatory>
+<mandatory>**V1 stays untouched (side-by-side install).** The V1 database file is NEVER renamed by V2's migration. V1's `~/.aletheia/data/aletheia.db` remains exactly as it was; V1's MCP server can keep running on it. V2 reads V1 with `OpenFlags::SQLITE_OPEN_READ_ONLY`. Cutover is user-driven post-validation (uninstall V1 npm + remove V1 entry from `~/.claude/settings.json` + optional `rm -rf ~/.aletheia/`); not the migration tool's responsibility. The migration's commit point is the `scope_registry.db.migration_state.status='completed'` write, NOT a V1-DB rename.</mandatory>
+
+<mandatory>**Master-key flow Option 1 (per CEO pre-build review):** V2 setup mints a FRESH V2 master key (independent of V1's master). V1 keys are migrated into V2's `keys` table preserving `key_id` (V1 UUID) + `key_hash = SHA-256(v1_raw_value)` + original V1 permissions, but with `is_master_key=0`. The V1 master key (V1's only `permissions='maintenance' AND entry_scope IS NULL` row) becomes a 'maintenance'-permission sub-key in V2 with `is_master_key=0`. The new V2 master is `is_master_key=1`. Sessions can claim with EITHER the new V2 master OR the V1-now-V2-sub-key (both reach maintenance level); use the V2 master as the trust root for new operations.</mandatory>
 
 <mandatory>The lazy first-claim digest trigger marker MUST be set on each scope as `scopes.digest_pending_v1_migration=1`. The first claim of each scope in V2 (in `claim()`) checks this flag; if set, enqueues an `entry_threshold` trigger to digest the imported corpus, then sets the flag to 0. Inactive scopes never digest until claimed (per CEO Item 4 storm prevention).</mandatory>
+
+<mandatory>**Active V1 session detection (per CEO pre-build review item A6).** Before migration begins, scan `~/.aletheia-v2/sockets/` for live V1 MCP server processes (any `aletheia-<pid>.sock` file whose corresponding PID is alive per `kill(pid, 0)`). If any are detected, refuse with `<error code="V1_SESSIONS_ACTIVE" pids=[...] hint="Stop all V1 Claude Code sessions before migrating, OR pass --ignore-active-sessions to override (data races possible)"/>` UNLESS `--ignore-active-sessions` flag is set. Default is safe; override is documented but discouraged.</mandatory>
+
+<mandatory>**V1 schema version constraint (per CEO pre-build review item A8).** V2 supports migration from V1 schema_version >= 4 only. Lower versions refused with `<error code="V1_SCHEMA_TOO_OLD" found=N required=4 hint="Upgrade your V1 install to v0.2.7+ first, then re-run migrate-from-v1"/>`. Future contributor task: add fallback logic for v1 schema_version=3 with default values for missing columns (`revoked`, `name`).</mandatory>
 
 **Module structure (added in Phase 8):**
 
@@ -4542,57 +4644,86 @@ use crate::error::{Result, AletheiaError};
 use crate::migrate::report::MigrationReport;
 
 pub struct MigrateFromV1Params {
-    pub v1_db_path: PathBuf,
-    pub target_v2_data_dir: PathBuf,        // defaults to ~/.aletheia
+    pub v1_db_path: PathBuf,                // V1 install location, typically ~/.aletheia/data/aletheia.db
+    pub target_v2_data_dir: PathBuf,        // defaults to ~/.aletheia-v2/ (NOT ~/.aletheia-v2/)
     pub confirm_backup_taken: bool,
     pub dry_run: bool,
     pub stage_digest_as_mass_ingest: bool,  // Per CEO Item 4 — opt-in for large single-scope corpora
-    pub force: bool,                        // Allow overwriting existing V2 data (audited)
+    pub ignore_active_sessions: bool,       // CEO pre-build A6: override the active V1 session refusal
 }
 
 pub async fn migrate_from_v1(
-    master_key_value: &crate::types::key::KeyValue,
+    v2_master_key_value: &crate::types::key::KeyValue,  // V2 master from `aletheia-v2 setup` (NOT V1's master)
     params: MigrateFromV1Params,
 ) -> Result<MigrationReport> {
-    // 1. Master-key gate
+    // 1. Backup-confirmation gate
     if !params.confirm_backup_taken {
-        return Err(AletheiaError::Other("confirm_backup_taken must be true — Aletheia does not verify the backup, but requires user acknowledgment".into()));
+        return Err(AletheiaError::Other(
+            "confirm_backup_taken must be true — Aletheia does not verify the backup, but requires user acknowledgment. \
+             Recommended: cp ~/.aletheia/data/aletheia.db ~/aletheia-v1-backup-$(date +%Y%m%d).db".into()
+        ));
     }
     if !params.v1_db_path.exists() {
         return Err(AletheiaError::Other(format!("V1 DB not found at {}", params.v1_db_path.display())));
     }
 
-    // Verify master key (caller usually does this; double-check here)
-    let registry_path = params.target_v2_data_dir.join("scope_registry.db");
-    if registry_path.exists() && !params.force {
+    // 2. Active V1 session detection (CEO pre-build review item A6)
+    let v1_data_dir = params.v1_db_path.parent()
+        .and_then(|p| p.parent())  // .../data/aletheia.db -> .../data -> ~/.aletheia
+        .ok_or_else(|| AletheiaError::Other("Could not infer V1 data dir from db path".into()))?;
+    let v1_sockets_dir = v1_data_dir.join("sockets");
+    let active_v1_pids = scan_active_v1_sessions(&v1_sockets_dir)?;
+    if !active_v1_pids.is_empty() && !params.ignore_active_sessions {
         return Err(AletheiaError::Other(format!(
-            "V2 data directory already exists at {}. Pass --force to overwrite (audited).",
+            "V1 sessions are active (PIDs: {:?}). Stop all V1 Claude Code sessions before migrating, \
+             OR pass --ignore-active-sessions to override (data races possible).",
+            active_v1_pids
+        )));
+    }
+    if !active_v1_pids.is_empty() {
+        tracing::warn!("Proceeding with --ignore-active-sessions despite live V1 PIDs: {:?}", active_v1_pids);
+    }
+
+    // 3. V2 master key validation (V2 master must already exist from `aletheia-v2 setup`)
+    let registry_path = params.target_v2_data_dir.join("scope_registry.db");
+    if !registry_path.exists() {
+        return Err(AletheiaError::Other(format!(
+            "V2 not initialized at {}. Run `aletheia-v2 setup` first to mint a V2 master key and bootstrap the data directory.",
             params.target_v2_data_dir.display()
         )));
     }
+    // (Master-key verification happens via the CLI's hash check before calling this fn.)
 
-    // 2. Setup target directory
-    std::fs::create_dir_all(params.target_v2_data_dir.join("scopes"))?;
-    std::fs::create_dir_all(params.target_v2_data_dir.join("keys"))?;
-    std::fs::create_dir_all(params.target_v2_data_dir.join("sessions"))?;
-    std::fs::create_dir_all(params.target_v2_data_dir.join("sockets"))?;
-    std::fs::create_dir_all(params.target_v2_data_dir.join("sdk-runtime"))?;
-
-    // 3. Open V1 DB read-only
+    // 4. Open V1 DB read-only (V1 file is NEVER touched/renamed in side-by-side install model)
     let v1_conn = Connection::open_with_flags(&params.v1_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     crate::db::pragmas::apply(&v1_conn).ok();  // PRAGMAs are connection-scoped; read-only OK
 
-    // 4. Introspect V1 schema; enumerate unique scopes
+    // 5. Introspect V1 schema (CEO pre-build review item A8: refuse V1 schema_version < 4)
     let v1_meta = crate::migrate::v1_intro::introspect(&v1_conn)?;
+    if v1_meta.schema_version < 4 {
+        return Err(AletheiaError::Other(format!(
+            "V1 schema_version {} is too old. Minimum supported: 4. Upgrade your V1 install to v0.2.7+ first, then re-run.",
+            v1_meta.schema_version
+        )));
+    }
     tracing::info!("V1 schema_version={}, scopes_found={}, total_entries={}", v1_meta.schema_version, v1_meta.scopes.len(), v1_meta.total_entries);
 
     if params.dry_run {
-        return Ok(MigrationReport::dry_run(v1_meta));
+        let report = MigrationReport::dry_run(&v1_meta, &params.target_v2_data_dir);
+        // Write dry-run report to ~/.aletheia-v2/dry-run-reports/<timestamp>.{json,md}
+        let reports_dir = params.target_v2_data_dir.join("dry-run-reports");
+        std::fs::create_dir_all(&reports_dir)?;
+        let ts = chrono::Utc::now().format("%Y%m%dT%H%M%S");
+        std::fs::write(reports_dir.join(format!("{}.json", ts)), serde_json::to_string_pretty(&report.to_json())?)?;
+        std::fs::write(reports_dir.join(format!("{}.md", ts)), report.render_markdown())?;
+        tracing::info!("Dry-run reports written to {}/{}.{{json,md}}", reports_dir.display(), ts);
+        return Ok(report);
     }
 
-    // 5. Create V2 scope_registry.db
-    let mut registry_conn = Connection::open_with_flags(&registry_path, OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE)?;
+    // 6. Open existing V2 scope_registry.db (already created by `aletheia-v2 setup`)
+    let mut registry_conn = Connection::open_with_flags(&registry_path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     crate::db::pragmas::apply(&registry_conn)?;
+    // install_all is IDEMPOTENT (CREATE IF NOT EXISTS); safe to re-run
     crate::db::registry_schema::install_all(&registry_conn)?;
 
     // 6. Begin migration tracking
@@ -4610,8 +4741,10 @@ pub async fn migrate_from_v1(
     )?;
 
     // 7. For each scope: create scope DB + run all transforms in one transaction
+    // Track ALL files created (per CEO pre-build review item A9: failure cleanup must include key files)
     let mut report = MigrationReport::new(v1_meta.clone());
     let mut created_scope_files: Vec<PathBuf> = vec![];
+    let mut created_key_files: Vec<PathBuf> = vec![];
     let migration_result: Result<()> = (|| {
         for scope_meta in &v1_meta.scopes {
             let scope_uuid = uuid::Uuid::new_v4().to_string();
@@ -4660,8 +4793,21 @@ pub async fn migrate_from_v1(
             report.scope_reports.push(scope_report);
         }
 
-        // Migrate keys
-        crate::migrate::keys::transform(&v1_conn, &registry_conn, &params.target_v2_data_dir, &v1_meta, &mut report)?;
+        // Migrate keys (Option 1 master-key flow per CEO pre-build review):
+        //   V2 master key (already created by `aletheia-v2 setup`) is the trust root.
+        //   V1 keys are inserted into V2's keys table preserving key_id + key_hash + permissions,
+        //   but with is_master_key=0 (even V1's master is a regular maintenance-permission key in V2).
+        //   Tracks files created in created_key_files for failure cleanup (A9).
+        crate::migrate::keys::transform(&v1_conn, &params.target_v2_data_dir, v1_data_dir, &registry_conn, &v1_meta, &mut report, &mut created_key_files)?;
+
+        // Post-all-transforms: walk V1's memory_journal_provenance and INSERT translated rows
+        // into each scope's V2 memory_journal_provenance (per CEO pre-build review item A3).
+        // Uses the id_mappings populated by journal::transform and memory::transform.
+        crate::migrate::provenance::translate_all(&v1_conn, &params.target_v2_data_dir, &report)?;
+
+        // Post-migration validation (CEO pre-build review item A5):
+        // assert sum(V2 rows by entry_class) == V1 rows by entry_class + V1 memory_versions count
+        crate::migrate::validation::verify_row_counts(&v1_conn, &params.target_v2_data_dir, &report)?;
 
         // Optional: stage as mass-ingest (per CEO Item 4)
         if params.stage_digest_as_mass_ingest {
@@ -4686,32 +4832,40 @@ pub async fn migrate_from_v1(
 
     match migration_result {
         Ok(()) => {
-            // 8. Commit migration_state
+            // 8. Commit migration_state. NOTE: V1 DB is NOT renamed (side-by-side install model).
+            // Cutover is user-driven: validate V2 → uninstall V1 npm → optional rm -rf ~/.aletheia-v2/.
             registry_conn.execute(
                 "UPDATE migration_state SET status='completed', is_applying=0, completed_at=CURRENT_TIMESTAMP WHERE migration_id=?",
                 rusqlite::params![&migration_id],
             )?;
 
-            // 9. Rename V1 DB to .bak (NEVER delete)
-            let bak_path = params.v1_db_path.with_extension("db.bak.aletheia-v1-pre-migration");
-            std::fs::rename(&params.v1_db_path, &bak_path)?;
-
             crate::db::audit_log::emit_event(
                 &registry_conn, crate::types::audit::AuditEventCategory::Migration, "v1_migration_completed",
-                None, Some(&crate::auth::keys::hash_key(master_key_value).0), None,
-                Some(&serde_json::json!({"migration_id": &migration_id, "v1_backup": bak_path.to_string_lossy(), "report": report.summary_json()}))
+                None, Some(&crate::auth::keys::hash_key(v2_master_key_value).0), None,
+                Some(&serde_json::json!({
+                    "migration_id": &migration_id,
+                    "v1_path_preserved": params.v1_db_path.to_string_lossy(),  // V1 untouched
+                    "v2_target": params.target_v2_data_dir.to_string_lossy(),
+                    "report": report.summary_json(),
+                    "next_step_hint": "Validate V2 with a test session, then run docs/MIGRATION-FROM-V1.md cutover steps to retire V1."
+                }))
             )?;
 
             Ok(report)
         }
         Err(e) => {
-            // 8. Cleanup: delete created scope files
-            for path in created_scope_files {
-                let _ = std::fs::remove_file(&path);
+            // 8. Cleanup: delete ALL files created during this migration (CEO pre-build review item A9).
+            // Note: this is the FAILURE path with FULL cleanup. After cleanup, no V2 state exists
+            // from this migration — so is_applying flips to false (CEO pre-build review item A10:
+            // "safe-hold" only applies when partial state exists; full cleanup means no state to lock against).
+            for path in &created_scope_files {
+                let _ = std::fs::remove_file(path);
             }
-            // 9. Mark migration_state failed (is_applying STAYS true — admin must manually clear via force_unlock)
+            for path in &created_key_files {
+                let _ = std::fs::remove_file(path);
+            }
             registry_conn.execute(
-                "UPDATE migration_state SET status='failed', failed_at=CURRENT_TIMESTAMP, error_message=? WHERE migration_id=?",
+                "UPDATE migration_state SET status='failed', is_applying=0, failed_at=CURRENT_TIMESTAMP, error_message=? WHERE migration_id=?",
                 rusqlite::params![e.to_string(), &migration_id],
             )?;
             crate::db::audit_log::emit_event(
@@ -4722,6 +4876,412 @@ pub async fn migrate_from_v1(
             Err(e)
         }
     }
+}
+
+/// CEO pre-build review item A6: scan V1's sockets directory for live MCP server processes.
+fn scan_active_v1_sessions(v1_sockets_dir: &std::path::Path) -> Result<Vec<i32>> {
+    let mut alive = vec![];
+    if !v1_sockets_dir.exists() { return Ok(alive); }
+    for entry in std::fs::read_dir(v1_sockets_dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        // V1 sockets are named "aletheia-<pid>.sock"
+        if let Some(rest) = name_str.strip_prefix("aletheia-").and_then(|s| s.strip_suffix(".sock")) {
+            if let Ok(pid) = rest.parse::<i32>() {
+                #[cfg(unix)]
+                {
+                    if nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok() {
+                        alive.push(pid);
+                    }
+                }
+                #[cfg(windows)]
+                {
+                    // Use winapi OpenProcess + GetExitCodeProcess pattern
+                    // Implementation deferred to platform-specific module
+                    alive.push(pid);  // Conservative: assume alive on Windows
+                }
+            }
+        }
+    }
+    Ok(alive)
+}
+```
+
+**Dry-run report structure (`src/migrate/report.rs`) — CEO pre-build review item A7:**
+
+```rust
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationReport {
+    pub mode: ReportMode,                              // "dry_run" | "actual"
+    pub v1_source: V1SourceInfo,
+    pub v2_target_data_dir: String,
+    pub scopes_planned: Vec<ScopePlanReport>,
+    pub keys_planned: Vec<KeyPlanReport>,
+    pub estimated_duration_seconds: u64,
+    pub estimated_disk_required_bytes: u64,
+    pub will_rename_v1: bool,                          // Always false (side-by-side install)
+    pub will_write: bool,                              // false in dry-run, true in actual
+    pub warnings: Vec<String>,
+    pub errors: Vec<String>,
+    pub scope_reports: Vec<ScopeReport>,               // populated in actual mode (per-scope detail)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportMode { DryRun, Actual }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct V1SourceInfo {
+    pub path: String,
+    pub schema_version: u32,
+    pub file_size_bytes: u64,
+    pub total_entries: u64,
+    pub total_keys: u64,
+    pub total_status_documents: u64,
+    pub total_handoffs: u64,
+    pub total_memory_versions: u64,
+    pub total_provenance_rows: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScopePlanReport {
+    pub v1_namespace: String,
+    pub v2_scope_uuid: String,                         // deterministic in dry_run (hash of namespace) so dry_run + actual match
+    pub v2_scope_db_path: String,
+    pub rows_planned: RowsByClass,
+    pub estimated_disk_bytes: u64,
+    pub risks_detected: Vec<String>,                   // e.g., "1 entry has NULL value — will be migrated as empty string with warning"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowsByClass {
+    pub memory_active: u32,
+    pub memory_archived: u32,
+    pub memory_history_versions: u32,
+    pub journal_count: u32,
+    pub journal_with_provenance: u32,
+    pub status_documents: u32,
+    pub status_sections: u32,
+    pub handoff_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyPlanReport {
+    pub v1_key_id: String,
+    pub v2_key_hash: String,                           // SHA-256 of V1's raw value
+    pub v2_key_file: String,                           // ~/.aletheia-v2/keys/<name>.key
+    pub permissions: String,
+    pub primary_scope: String,
+    pub was_v1_master: bool,                           // V1 master keys become V2 maintenance sub-keys (is_master_key=0)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScopeReport {
+    pub namespace: String,
+    pub scope_id: String,
+    pub memory_active: u32,
+    pub memory_archived: u32,
+    pub memory_history: u32,
+    pub journal_count: u32,
+    pub status_count: u32,
+    pub handoff_count: u32,
+    pub provenance_translated: u32,
+    pub id_mapping: std::collections::HashMap<String, String>,  // V1 ID → V2 entry_id (for provenance translation)
+}
+
+impl ScopeReport {
+    pub fn total_rows(&self) -> u32 {
+        self.memory_active + self.memory_archived + self.memory_history
+            + self.journal_count + self.status_count + self.handoff_count
+    }
+    pub fn new(namespace: String, scope_id: String) -> Self {
+        Self {
+            namespace, scope_id,
+            memory_active: 0, memory_archived: 0, memory_history: 0,
+            journal_count: 0, status_count: 0, handoff_count: 0, provenance_translated: 0,
+            id_mapping: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl MigrationReport {
+    pub fn dry_run(v1_meta: &super::v1_intro::V1Meta, target_v2_data_dir: &std::path::Path) -> Self {
+        // Build per-scope plan reports with deterministic UUIDs (hash of namespace)
+        // so dry_run + actual produce matching scope_uuid values
+        let scopes_planned = v1_meta.scopes.iter().map(|s| {
+            let v2_scope_uuid = deterministic_scope_uuid(&s.namespace);
+            ScopePlanReport {
+                v1_namespace: s.namespace.clone(),
+                v2_scope_uuid: v2_scope_uuid.clone(),
+                v2_scope_db_path: target_v2_data_dir.join("scopes").join(format!("{}.db", v2_scope_uuid)).to_string_lossy().to_string(),
+                rows_planned: RowsByClass {
+                    memory_active: s.memory_active_count as u32,
+                    memory_archived: s.memory_archived_count as u32,
+                    memory_history_versions: s.memory_history_count as u32,
+                    journal_count: s.journal_count as u32,
+                    journal_with_provenance: s.journal_with_provenance_count as u32,
+                    status_documents: s.status_document_count as u32,
+                    status_sections: s.status_section_count as u32,
+                    handoff_count: s.handoff_count as u32,
+                },
+                estimated_disk_bytes: estimate_scope_disk(s),
+                risks_detected: detect_risks(s),
+            }
+        }).collect();
+
+        let keys_planned = vec![]; // populated by keys::dry_run_plan in real impl
+
+        Self {
+            mode: ReportMode::DryRun,
+            v1_source: V1SourceInfo {
+                path: v1_meta.source_path.clone(),
+                schema_version: v1_meta.schema_version,
+                file_size_bytes: v1_meta.file_size_bytes,
+                total_entries: v1_meta.total_entries,
+                total_keys: v1_meta.total_keys,
+                total_status_documents: v1_meta.total_status_documents,
+                total_handoffs: v1_meta.total_handoffs,
+                total_memory_versions: v1_meta.total_memory_versions,
+                total_provenance_rows: v1_meta.total_provenance_rows,
+            },
+            v2_target_data_dir: target_v2_data_dir.to_string_lossy().to_string(),
+            scopes_planned, keys_planned,
+            estimated_duration_seconds: v1_meta.total_entries / 30 + 5,  // ~30 entries/sec heuristic
+            estimated_disk_required_bytes: v1_meta.file_size_bytes * 3,  // V1 + V2 + .bak temporarily
+            will_rename_v1: false,                                         // ALWAYS false (side-by-side)
+            will_write: false,                                             // dry_run never writes
+            warnings: vec![],
+            errors: vec![],
+            scope_reports: vec![],
+        }
+    }
+
+    pub fn render_markdown(&self) -> String {
+        // Human-readable formatted markdown; structure mirrors the JSON for readability
+        // Implementation: ~50 lines using `writeln!` against a String
+        format!("# Aletheia V1 → V2 Migration {}-Run Report\n\n...", if matches!(self.mode, ReportMode::DryRun) { "Dry" } else { "Actual" })
+    }
+
+    pub fn to_json(&self) -> serde_json::Value { serde_json::to_value(self).unwrap_or(serde_json::Value::Null) }
+    pub fn summary_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "scopes": self.scope_reports.len(),
+            "total_v2_rows": self.scope_reports.iter().map(|s| s.total_rows() as u64).sum::<u64>(),
+        })
+    }
+    pub fn new(_v1_meta: super::v1_intro::V1Meta) -> Self { unimplemented!("called by orchestrator for actual mode; symmetric to dry_run constructor") }
+}
+
+/// SHA-256-based deterministic scope_uuid so dry_run + actual produce matching values.
+fn deterministic_scope_uuid(namespace: &str) -> String {
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(b"aletheia-v2-scope:");
+    hasher.update(namespace.as_bytes());
+    let hash = hasher.finalize();
+    // Format as UUID-like 8-4-4-4-12 hex
+    let h = hex::encode(&hash[..16]);
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+}
+
+fn estimate_scope_disk(s: &super::v1_intro::V1Scope) -> u64 {
+    // Rough heuristic: ~2KB per row (content + indexes + WAL overhead)
+    (s.memory_active_count + s.memory_archived_count + s.memory_history_count + s.journal_count + s.status_section_count + s.handoff_count) * 2048
+}
+
+fn detect_risks(_s: &super::v1_intro::V1Scope) -> Vec<String> {
+    // Real impl scans for NULL values, oversized content, etc.
+    vec![]
+}
+```
+
+**Memory transform — two-pass version numbering (CEO pre-build review item A1):**
+
+```rust
+// src/migrate/memory.rs — replace the simplified version-numbering block in the body
+// of `transform()` (which previously assigned versions inline) with the two-pass algorithm:
+
+pub fn transform(v1_conn: &Connection, scope_tx: &Transaction, scope_meta: &V1Scope, scope_id: &ScopeId, report: &mut ScopeReport) -> Result<()> {
+    for mem in fetch_v1_memory_entries(v1_conn, scope_meta)? {
+        let new_entry_id = uuid::Uuid::new_v4().to_string();
+
+        // PASS 1: count V1 history rows for this memory_entry to determine final version count
+        let history_rows: Vec<HistoryRow> = fetch_history(v1_conn, &mem.v1_memory_id)?;
+        let history_count = history_rows.len() as u32;
+        let current_version = history_count + 1;        // current row's V2 version
+
+        // Build common fields
+        let mut tags = fetch_v1_tags_for_entry(v1_conn, &mem.v1_entry_id)?;
+        tags.push(format!("key:{}", mem.v1_key));
+        tags.push(format!("entry_id_legacy:{}", mem.v1_entry_id));
+        let tags_json = serde_json::to_string(&tags)?;
+
+        // PASS 2a: INSERT history rows with versions 1..N (ordered by V1.changed_at)
+        for (idx, hist) in history_rows.iter().enumerate() {
+            let next_change = if idx + 1 < history_rows.len() {
+                &history_rows[idx + 1].changed_at
+            } else {
+                &mem.updated_at
+            };
+            let hist_content_hash = crate::migrate::content_hash::compute(&hist.previous_value, &scope_id.0);
+            scope_tx.execute(
+                "INSERT INTO entries (entry_id, version, entry_class, content, content_hash, tags, valid_from, valid_to, invalidation_reason, critical_flag, created_by_key_hash)
+                 VALUES (?, ?, 'memory', ?, ?, ?, ?, ?, 'updated', 0, NULL)",
+                rusqlite::params![&new_entry_id, idx as u32 + 1, hist.previous_value, hist_content_hash, &tags_json, hist.changed_at, next_change],
+            )?;
+            report.memory_history += 1;
+        }
+
+        // PASS 2b: INSERT current row with version = N+1
+        let content_hash = crate::migrate::content_hash::compute(&mem.v1_value, &scope_id.0);
+        let (valid_to, invalidation_reason) = match (&mem.archived_at, &mem.superseded_by) {
+            (Some(at), _) => (Some(at.clone()), Some("retired:migrated_from_v1".to_string())),
+            (None, Some(b)) => (Some(mem.updated_at.clone()), Some(format!("superseded_by:{}", b))),
+            (None, None) => (None, None),
+        };
+        scope_tx.execute(
+            "INSERT INTO entries (entry_id, version, entry_class, content, content_hash, tags, valid_from, valid_to, invalidation_reason, supersedes_entry_id, critical_flag, digested_at, created_by_key_hash)
+             VALUES (?, ?, 'memory', ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL)",
+            rusqlite::params![&new_entry_id, current_version, mem.v1_value, content_hash, &tags_json, mem.updated_at, valid_to, invalidation_reason, mem.superseded_by],
+        )?;
+        if mem.archived_at.is_none() { report.memory_active += 1; } else { report.memory_archived += 1; }
+
+        // Track V1 memory_id → V2 new_entry_id for post-pass provenance translation
+        report.id_mapping.insert(mem.v1_memory_id.clone(), new_entry_id);
+    }
+    Ok(())
+}
+
+/// CEO pre-build review item A2: actual SQL JOIN for V1 tags lookup.
+fn fetch_v1_tags_for_entry(v1_conn: &Connection, v1_entry_id: &str) -> Result<Vec<String>> {
+    let mut stmt = v1_conn.prepare(
+        "SELECT t.name FROM tags t JOIN entry_tags et ON et.tag_id = t.id WHERE et.entry_id = ? ORDER BY t.name"
+    )?;
+    let tags: Vec<String> = stmt.query_map(
+        rusqlite::params![v1_entry_id],
+        |row| row.get::<_, String>(0),
+    )?.filter_map(|r| r.ok()).collect();
+    Ok(tags)
+}
+
+fn fetch_v1_memory_entries(_v1_conn: &Connection, _scope_meta: &V1Scope) -> Result<Vec<MemoryRow>> { todo!("query as before") }
+fn fetch_history(_v1_conn: &Connection, _v1_memory_id: &str) -> Result<Vec<HistoryRow>> {
+    // SELECT id, previous_value, previous_version_id, changed_at FROM memory_versions
+    // WHERE memory_entry_id = ? ORDER BY changed_at
+    todo!()
+}
+```
+
+**Provenance translation pass (CEO pre-build review item A3):**
+
+```rust
+// src/migrate/provenance.rs — runs AFTER all per-scope transforms complete.
+// Walks V1's memory_journal_provenance and INSERTs translated rows into each scope's V2 memory_journal_provenance.
+// Uses the id_mapping populated by both journal::transform AND memory::transform.
+
+use rusqlite::{Connection, OpenFlags};
+use std::path::Path;
+use crate::error::Result;
+
+pub fn translate_all(v1_conn: &Connection, target_v2_data_dir: &Path, report: &super::report::MigrationReport) -> Result<()> {
+    // Build a global mapping V1_id → (V2_entry_id, V2_scope_uuid) for both memory and journal IDs
+    let mut global_mapping: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+    for scope_report in &report.scope_reports {
+        for (v1_id, v2_entry_id) in &scope_report.id_mapping {
+            global_mapping.insert(v1_id.clone(), (v2_entry_id.clone(), scope_report.scope_id.clone()));
+        }
+    }
+
+    // Read V1 provenance
+    let mut stmt = v1_conn.prepare("SELECT memory_entry_id, journal_entry_id FROM memory_journal_provenance")?;
+    let v1_rows: Vec<(String, String)> = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        ?.filter_map(|r| r.ok()).collect();
+
+    // Group by target scope (the scope of the memory side; V1 provenance is intra-scope by construction)
+    let mut by_scope: std::collections::HashMap<String, Vec<(String, String)>> = std::collections::HashMap::new();
+    for (v1_memory_id, v1_journal_id) in v1_rows {
+        if let (Some((v2_mem_id, mem_scope)), Some((v2_journal_id, _))) = (
+            global_mapping.get(&v1_memory_id), global_mapping.get(&v1_journal_id)
+        ) {
+            by_scope.entry(mem_scope.clone()).or_default().push((v2_mem_id.clone(), v2_journal_id.clone()));
+        } else {
+            tracing::warn!("Skipping orphan V1 provenance: memory={} journal={} (id_mapping miss)", v1_memory_id, v1_journal_id);
+        }
+    }
+
+    // INSERT into each scope's memory_journal_provenance
+    for (scope_id, rows) in by_scope {
+        let scope_db_path = target_v2_data_dir.join("scopes").join(format!("{}.db", scope_id));
+        let conn = Connection::open_with_flags(&scope_db_path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        crate::db::pragmas::apply(&conn)?;
+        let tx = conn.unchecked_transaction()?;
+        for (v2_mem, v2_journal) in &rows {
+            tx.execute(
+                "INSERT OR IGNORE INTO memory_journal_provenance (memory_entry_id, journal_entry_id) VALUES (?, ?)",
+                rusqlite::params![v2_mem, v2_journal],
+            )?;
+        }
+        tx.commit()?;
+        tracing::info!("Translated {} provenance rows into scope {}", rows.len(), scope_id);
+    }
+    Ok(())
+}
+```
+
+**Validation pass (CEO pre-build review item A5):**
+
+```rust
+// src/migrate/validation.rs — runs AFTER all transforms + provenance translation.
+// Confirms no rows were lost during the per-scope transforms.
+
+use rusqlite::{Connection, OpenFlags};
+use std::path::Path;
+use crate::error::{Result, AletheiaError};
+
+pub fn verify_row_counts(v1_conn: &Connection, target_v2_data_dir: &Path, report: &super::report::MigrationReport) -> Result<()> {
+    // Expected V2 row counts per entry_class:
+    //   memory = V1 active memory_entries + V1 archived memory_entries + V1 memory_versions
+    //   journal = V1 journal_entries
+    //   status (entries) = V1 status_documents (the container row)
+    //   handoff = V1 handoffs
+    // status_sections is a separate table; verify per-scope sums match V1 status_sections grouped by scope
+
+    let v1_memory_total: u64 = v1_conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM memory_entries) + (SELECT COUNT(*) FROM memory_versions)",
+        [], |row| row.get(0)
+    )?;
+    let v1_journal_total: u64 = v1_conn.query_row("SELECT COUNT(*) FROM journal_entries", [], |row| row.get(0))?;
+    let v1_status_doc_total: u64 = v1_conn.query_row("SELECT COUNT(*) FROM status_documents", [], |row| row.get(0))?;
+    let v1_handoff_total: u64 = v1_conn.query_row("SELECT COUNT(*) FROM handoffs", [], |row| row.get(0))?;
+
+    // Sum across all V2 scope DBs
+    let mut v2_memory = 0u64;
+    let mut v2_journal = 0u64;
+    let mut v2_status = 0u64;
+    let mut v2_handoff = 0u64;
+    for scope_report in &report.scope_reports {
+        let scope_db = target_v2_data_dir.join("scopes").join(format!("{}.db", scope_report.scope_id));
+        let conn = Connection::open_with_flags(&scope_db, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        v2_memory += conn.query_row("SELECT COUNT(*) FROM entries WHERE entry_class='memory'", [], |row| row.get::<_, u64>(0))?;
+        v2_journal += conn.query_row("SELECT COUNT(*) FROM entries WHERE entry_class='journal'", [], |row| row.get::<_, u64>(0))?;
+        v2_status += conn.query_row("SELECT COUNT(*) FROM entries WHERE entry_class='status'", [], |row| row.get::<_, u64>(0))?;
+        v2_handoff += conn.query_row("SELECT COUNT(*) FROM entries WHERE entry_class='handoff'", [], |row| row.get::<_, u64>(0))?;
+    }
+
+    let mut errors = vec![];
+    if v2_memory != v1_memory_total { errors.push(format!("memory count mismatch: V1={} V2={}", v1_memory_total, v2_memory)); }
+    if v2_journal != v1_journal_total { errors.push(format!("journal count mismatch: V1={} V2={}", v1_journal_total, v2_journal)); }
+    if v2_status != v1_status_doc_total { errors.push(format!("status count mismatch: V1={} V2={}", v1_status_doc_total, v2_status)); }
+    if v2_handoff != v1_handoff_total { errors.push(format!("handoff count mismatch: V1={} V2={}", v1_handoff_total, v2_handoff)); }
+
+    if !errors.is_empty() {
+        return Err(AletheiaError::Other(format!("Migration validation failed:\n  - {}", errors.join("\n  - "))));
+    }
+    tracing::info!("Migration validation: all row counts match (memory={} journal={} status={} handoff={})", v2_memory, v2_journal, v2_status, v2_handoff);
+    Ok(())
 }
 ```
 
@@ -4734,27 +5294,37 @@ use crate::error::Result;
 #[derive(Debug, Clone)]
 pub struct V1Meta {
     pub schema_version: u32,
+    pub source_path: String,                       // for inclusion in dry-run report
+    pub file_size_bytes: u64,                      // for disk-estimate calculation
     pub scopes: Vec<V1Scope>,
     pub total_entries: u64,
     pub total_keys: u64,
     pub total_status_documents: u64,
     pub total_handoffs: u64,
+    pub total_memory_versions: u64,                // CEO pre-build review item A1: history rows count
+    pub total_provenance_rows: u64,                // CEO pre-build review item A3: for translation pass
 }
 
 #[derive(Debug, Clone)]
 pub struct V1Scope {
-    pub namespace: String,                  // V1's project_namespace value (or "default" for NULL)
-    pub entry_ids: Vec<String>,             // V1 entries.id values in this namespace
+    pub namespace: String,                         // V1's project_namespace value (or "default" for NULL)
+    pub entry_ids: Vec<String>,
+    // Detailed counts (used by dry-run report's RowsByClass):
     pub journal_count: u64,
-    pub memory_count: u64,
-    pub status_count: u64,
+    pub journal_with_provenance_count: u64,        // count of journal entries that appear in memory_journal_provenance
+    pub memory_active_count: u64,
+    pub memory_archived_count: u64,
+    pub memory_history_count: u64,                 // V1.memory_versions rows for this scope's memories
+    pub status_document_count: u64,
+    pub status_section_count: u64,                 // sum of status_sections rows across this scope's status docs
     pub handoff_count: u64,
 }
 
-pub fn introspect(v1_conn: &Connection) -> Result<V1Meta> {
-    // schema_version
+pub fn introspect(v1_conn: &Connection, v1_db_path: &std::path::Path) -> Result<V1Meta> {
     let schema_version: u32 = v1_conn.query_row("SELECT version FROM schema_version", [], |row| row.get(0))
         .unwrap_or(0);
+
+    let file_size_bytes = std::fs::metadata(v1_db_path).map(|m| m.len()).unwrap_or(0);
 
     // Enumerate unique namespaces (NULL → "default")
     let namespaces: Vec<String> = {
@@ -4764,32 +5334,23 @@ pub fn introspect(v1_conn: &Connection) -> Result<V1Meta> {
 
     let mut scopes = vec![];
     for ns in namespaces {
-        let entry_ids: Vec<String> = {
-            let ns_filter = if ns == "default" { "project_namespace IS NULL" } else { "project_namespace = ?" };
-            let sql = format!("SELECT id FROM entries WHERE {}", ns_filter);
-            let mut stmt = v1_conn.prepare(&sql)?;
-            if ns == "default" {
-                stmt.query_map([], |row| row.get::<_, String>(0))?.filter_map(|r| r.ok()).collect()
-            } else {
-                stmt.query_map(rusqlite::params![ns], |row| row.get::<_, String>(0))?.filter_map(|r| r.ok()).collect()
-            }
-        };
+        let entry_ids: Vec<String> = fetch_entry_ids_for_namespace(v1_conn, &ns)?;
 
-        let count_sql = |table: &str, class: Option<&str>| -> Result<u64> {
-            // Counts per scope by joining via entry_id
-            let where_class = class.map(|c| format!(" AND e.entry_class = '{}'", c)).unwrap_or_default();
-            let ns_filter = if ns == "default" { "e.project_namespace IS NULL".to_string() } else { format!("e.project_namespace = '{}'", ns) };
-            let sql = format!("SELECT COUNT(*) FROM entries e JOIN {} t ON t.entry_id = e.id WHERE {}{}", table, ns_filter, where_class);
-            v1_conn.query_row(&sql, [], |row| row.get(0)).map_err(Into::into)
-        };
+        let journal_count = count_per_scope(v1_conn, &ns, "journal_entries", Some("journal"))?;
+        let memory_active_count = count_memory_per_scope(v1_conn, &ns, /* archived */ false)?;
+        let memory_archived_count = count_memory_per_scope(v1_conn, &ns, /* archived */ true)?;
+        let memory_history_count = count_memory_versions_per_scope(v1_conn, &ns)?;
+        let status_document_count = count_per_scope(v1_conn, &ns, "status_documents", Some("status"))?;
+        let status_section_count = count_status_sections_per_scope(v1_conn, &ns)?;
+        let handoff_count = count_handoffs_per_scope(v1_conn, &ns)?;
+        let journal_with_provenance_count = count_journal_with_provenance_per_scope(v1_conn, &ns)?;
 
         scopes.push(V1Scope {
-            namespace: ns.clone(),
-            journal_count: count_sql("journal_entries", Some("journal"))?,
-            memory_count: count_sql("memory_entries", Some("memory"))?,
-            status_count: count_sql("status_documents", Some("status"))?,
-            handoff_count: 0,  // handoffs has its own primary key, query separately
+            namespace: ns,
             entry_ids,
+            journal_count, journal_with_provenance_count,
+            memory_active_count, memory_archived_count, memory_history_count,
+            status_document_count, status_section_count, handoff_count,
         });
     }
 
@@ -4797,8 +5358,115 @@ pub fn introspect(v1_conn: &Connection) -> Result<V1Meta> {
     let total_keys: u64 = v1_conn.query_row("SELECT COUNT(*) FROM keys", [], |row| row.get(0))?;
     let total_status_documents: u64 = v1_conn.query_row("SELECT COUNT(*) FROM status_documents", [], |row| row.get(0))?;
     let total_handoffs: u64 = v1_conn.query_row("SELECT COUNT(*) FROM handoffs", [], |row| row.get(0))?;
+    let total_memory_versions: u64 = v1_conn.query_row("SELECT COUNT(*) FROM memory_versions", [], |row| row.get(0))?;
+    let total_provenance_rows: u64 = v1_conn.query_row("SELECT COUNT(*) FROM memory_journal_provenance", [], |row| row.get(0))?;
 
-    Ok(V1Meta { schema_version, scopes, total_entries, total_keys, total_status_documents, total_handoffs })
+    Ok(V1Meta {
+        schema_version, source_path: v1_db_path.to_string_lossy().to_string(), file_size_bytes,
+        scopes, total_entries, total_keys, total_status_documents, total_handoffs,
+        total_memory_versions, total_provenance_rows,
+    })
+}
+
+// CEO pre-build review item A4: count handoffs per scope.
+// V1's handoffs.target_key is the consuming key's id (FK to keys.id, not enforced).
+// To count handoffs per namespace: look up which keys belong to which namespace via keys.entry_scope,
+// then count handoffs whose target_key matches keys in that namespace.
+fn count_handoffs_per_scope(v1_conn: &Connection, ns: &str) -> Result<u64> {
+    let sql = if ns == "default" {
+        "SELECT COUNT(*) FROM handoffs h
+         WHERE h.target_key IN (SELECT id FROM keys WHERE entry_scope IS NULL)"
+    } else {
+        "SELECT COUNT(*) FROM handoffs h
+         WHERE h.target_key IN (SELECT id FROM keys WHERE entry_scope = ?)"
+    };
+    if ns == "default" {
+        v1_conn.query_row(sql, [], |row| row.get(0)).map_err(Into::into)
+    } else {
+        v1_conn.query_row(sql, rusqlite::params![ns], |row| row.get(0)).map_err(Into::into)
+    }
+}
+
+fn count_per_scope(v1_conn: &Connection, ns: &str, table: &str, class: Option<&str>) -> Result<u64> {
+    let where_class = class.map(|c| format!(" AND e.entry_class = '{}'", c)).unwrap_or_default();
+    let ns_filter = if ns == "default" { "e.project_namespace IS NULL".to_string() } else { "e.project_namespace = ?".to_string() };
+    let sql = format!("SELECT COUNT(*) FROM entries e JOIN {} t ON t.entry_id = e.id WHERE {}{}", table, ns_filter, where_class);
+    if ns == "default" {
+        v1_conn.query_row(&sql, [], |row| row.get(0)).map_err(Into::into)
+    } else {
+        v1_conn.query_row(&sql, rusqlite::params![ns], |row| row.get(0)).map_err(Into::into)
+    }
+}
+
+fn count_memory_per_scope(v1_conn: &Connection, ns: &str, archived: bool) -> Result<u64> {
+    let archived_filter = if archived { "m.archived_at IS NOT NULL" } else { "m.archived_at IS NULL" };
+    let ns_filter = if ns == "default" { "e.project_namespace IS NULL".to_string() } else { "e.project_namespace = ?".to_string() };
+    let sql = format!("SELECT COUNT(*) FROM memory_entries m JOIN entries e ON e.id = m.entry_id WHERE {} AND {}", ns_filter, archived_filter);
+    if ns == "default" {
+        v1_conn.query_row(&sql, [], |row| row.get(0)).map_err(Into::into)
+    } else {
+        v1_conn.query_row(&sql, rusqlite::params![ns], |row| row.get(0)).map_err(Into::into)
+    }
+}
+
+fn count_memory_versions_per_scope(v1_conn: &Connection, ns: &str) -> Result<u64> {
+    let ns_filter = if ns == "default" { "e.project_namespace IS NULL".to_string() } else { "e.project_namespace = ?".to_string() };
+    let sql = format!(
+        "SELECT COUNT(*) FROM memory_versions mv
+         JOIN memory_entries m ON m.id = mv.memory_entry_id
+         JOIN entries e ON e.id = m.entry_id
+         WHERE {}",
+        ns_filter
+    );
+    if ns == "default" {
+        v1_conn.query_row(&sql, [], |row| row.get(0)).map_err(Into::into)
+    } else {
+        v1_conn.query_row(&sql, rusqlite::params![ns], |row| row.get(0)).map_err(Into::into)
+    }
+}
+
+fn count_status_sections_per_scope(v1_conn: &Connection, ns: &str) -> Result<u64> {
+    let ns_filter = if ns == "default" { "e.project_namespace IS NULL".to_string() } else { "e.project_namespace = ?".to_string() };
+    let sql = format!(
+        "SELECT COUNT(*) FROM status_sections ss
+         JOIN status_documents sd ON sd.id = ss.status_id
+         JOIN entries e ON e.id = sd.entry_id
+         WHERE {}",
+        ns_filter
+    );
+    if ns == "default" {
+        v1_conn.query_row(&sql, [], |row| row.get(0)).map_err(Into::into)
+    } else {
+        v1_conn.query_row(&sql, rusqlite::params![ns], |row| row.get(0)).map_err(Into::into)
+    }
+}
+
+fn count_journal_with_provenance_per_scope(v1_conn: &Connection, ns: &str) -> Result<u64> {
+    let ns_filter = if ns == "default" { "e.project_namespace IS NULL".to_string() } else { "e.project_namespace = ?".to_string() };
+    let sql = format!(
+        "SELECT COUNT(DISTINCT mjp.journal_entry_id) FROM memory_journal_provenance mjp
+         JOIN journal_entries j ON j.id = mjp.journal_entry_id
+         JOIN entries e ON e.id = j.entry_id
+         WHERE {}",
+        ns_filter
+    );
+    if ns == "default" {
+        v1_conn.query_row(&sql, [], |row| row.get(0)).map_err(Into::into)
+    } else {
+        v1_conn.query_row(&sql, rusqlite::params![ns], |row| row.get(0)).map_err(Into::into)
+    }
+}
+
+fn fetch_entry_ids_for_namespace(v1_conn: &Connection, ns: &str) -> Result<Vec<String>> {
+    let ns_filter = if ns == "default" { "project_namespace IS NULL" } else { "project_namespace = ?" };
+    let sql = format!("SELECT id FROM entries WHERE {}", ns_filter);
+    let mut stmt = v1_conn.prepare(&sql)?;
+    let rows: Vec<String> = if ns == "default" {
+        stmt.query_map([], |row| row.get::<_, String>(0))?.filter_map(|r| r.ok()).collect()
+    } else {
+        stmt.query_map(rusqlite::params![ns], |row| row.get::<_, String>(0))?.filter_map(|r| r.ok()).collect()
+    };
+    Ok(rows)
 }
 ```
 
@@ -4946,19 +5614,29 @@ use crate::error::Result;
 use crate::types::key::{KeyHash, KeyValue};
 use std::path::Path;
 
-pub fn transform(v1_conn: &Connection, registry_conn: &Connection, target_data_dir: &Path, v1_meta: &super::v1_intro::V1Meta, report: &mut super::report::MigrationReport) -> Result<()> {
-    // For each V1 key:
-    //   Look up the raw key value from V1's key file: ~/.aletheia/keys/<name>.key (V1 wrote files at bootstrap time)
-    //   Compute key_hash = SHA-256(raw)
-    //   Look up the V1 namespace → V2 scope_uuid mapping (from V1 meta + scope_registry)
-    //   INSERT into V2 keys table preserving key_id (V1's UUID)
-    //   COPY the key file to V2's keys directory (file path naming: ~/.aletheia/keys/<name>.key, same as V1)
-
+/// CEO pre-build review item A9: takes `&mut Vec<PathBuf>` to track V2 key files written
+/// (so failure cleanup in orchestrator can delete them).
+/// Master-key flow per CEO pre-build review Option 1: V1 keys (including V1's master)
+/// become V2 sub-keys with is_master_key=0; V2 master is the SEPARATE fresh key minted by
+/// `aletheia-v2 setup` BEFORE migration runs.
+pub fn transform(
+    v1_conn: &Connection,
+    target_v2_data_dir: &Path,                // V2 install directory (~/.aletheia-v2/)
+    v1_data_dir: &Path,                       // V1 install directory (~/.aletheia-v2/) — for reading V1 raw key values
+    registry_conn: &Connection,
+    v1_meta: &super::v1_intro::V1Meta,
+    report: &mut super::report::MigrationReport,
+    created_key_files: &mut Vec<std::path::PathBuf>,  // tracks files for failure cleanup
+) -> Result<()> {
+    // V1 stored raw key values DIRECTLY in DB (sensitive!). V2 stores SHA-256 hashes only.
+    // V1 ALSO wrote raw values to ~/.aletheia-v2/keys/<name>.key files at bootstrap; we prefer
+    // reading from files where available (matches V2's file-only storage model), falling back
+    // to the V1 DB column if a file is missing.
     let v1_keys = {
         let mut stmt = v1_conn.prepare("SELECT id, key_value, permissions, created_by, entry_scope, created_at, COALESCE(revoked, 0), name FROM keys")?;
         stmt.query_map([], |row| Ok(V1Key {
             key_id: row.get(0)?,
-            v1_raw_value: row.get::<_, String>(1)?,  // V1 stored raw values directly in DB! V2 hashes instead.
+            v1_raw_value: row.get::<_, String>(1)?,
             permissions: row.get(2)?,
             created_by: row.get(3)?,
             entry_scope: row.get(4)?,
@@ -4969,30 +5647,58 @@ pub fn transform(v1_conn: &Connection, registry_conn: &Connection, target_data_d
     };
 
     for v1_key in v1_keys {
-        let key_value = KeyValue(v1_key.v1_raw_value.clone());
+        // Prefer reading raw value from V1 key file (matches V2's file storage model);
+        // fallback to V1 DB column if file missing (some V1 keys may not have files)
+        let raw_value = if let Some(name) = &v1_key.name {
+            let v1_key_file = v1_data_dir.join("keys").join(format!("{}.key", name));
+            if v1_key_file.exists() {
+                std::fs::read_to_string(&v1_key_file).map(|s| s.trim().to_string()).unwrap_or(v1_key.v1_raw_value.clone())
+            } else {
+                v1_key.v1_raw_value.clone()
+            }
+        } else {
+            v1_key.v1_raw_value.clone()
+        };
+
+        let key_value = KeyValue(raw_value.clone());
         let key_hash = crate::auth::keys::hash_key(&key_value);
 
-        // Look up scope_uuid for this entry_scope
-        let primary_scope_id = registry_conn.query_row(
-            "SELECT scope_id FROM scopes WHERE name = COALESCE(?, 'default')",
-            rusqlite::params![v1_key.entry_scope.as_deref()],
-            |row| row.get::<_, String>(0),
-        ).unwrap_or_else(|_| "default".to_string());
+        // Look up scope_uuid for this V1 key's entry_scope
+        let primary_scope_id = if let Some(scope_name) = v1_key.entry_scope.as_deref() {
+            registry_conn.query_row(
+                "SELECT scope_id FROM scopes WHERE name = ?",
+                rusqlite::params![scope_name], |row| row.get::<_, String>(0),
+            ).unwrap_or_else(|_| {
+                // V1 key references a scope that wasn't found in V2's scopes (shouldn't happen if introspection is correct)
+                tracing::warn!("V1 key {} references unknown scope '{}'; assigning to 'default' scope", v1_key.key_id, scope_name);
+                "default".to_string()
+            })
+        } else {
+            // V1 key with NULL entry_scope = V1's master key OR an unscoped key.
+            // Per Option 1 master-key flow: V1's master becomes a V2 sub-key (is_master_key=0)
+            // attached to V2's "default" scope (which V2 setup creates if missing).
+            registry_conn.query_row(
+                "SELECT scope_id FROM scopes WHERE name = 'default'",
+                [], |row| row.get::<_, String>(0),
+            ).unwrap_or_else(|_| "default".to_string())
+        };
 
         let writable_scope_ids = serde_json::to_string(&vec![&primary_scope_id])?;
         let readonly_scope_ids = "[]".to_string();
         let revoked_at = if v1_key.revoked { Some(chrono::Utc::now().to_rfc3339()) } else { None };
 
+        // CRITICAL Option 1 invariant: is_master_key=0 for ALL migrated V1 keys, even V1's master.
+        // V2's master was minted by `aletheia-v2 setup` BEFORE this migration ran (separate key).
         registry_conn.execute(
             "INSERT INTO keys (key_id, key_hash, name, permissions, created_by_key_id, primary_scope_id, writable_scope_ids, readonly_scope_ids, is_master_key, is_digest_key, created_at, revoked_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)",
             rusqlite::params![v1_key.key_id, key_hash.0, v1_key.name, v1_key.permissions, v1_key.created_by, primary_scope_id, writable_scope_ids, readonly_scope_ids, v1_key.created_at, revoked_at],
         )?;
 
-        // Write key file at V2 location (preserve V1 path convention; usually identical)
+        // Write key file at V2 location (~/.aletheia-v2/keys/<name>.key)
         if let Some(name) = &v1_key.name {
-            let v2_key_path = target_data_dir.join("keys").join(format!("{}.key", name));
-            std::fs::write(&v2_key_path, &v1_key.v1_raw_value)?;
+            let v2_key_path = target_v2_data_dir.join("keys").join(format!("{}.key", name));
+            std::fs::write(&v2_key_path, &raw_value)?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -5000,9 +5706,17 @@ pub fn transform(v1_conn: &Connection, registry_conn: &Connection, target_data_d
                 perms.set_mode(0o600);
                 std::fs::set_permissions(&v2_key_path, perms)?;
             }
+            created_key_files.push(v2_key_path);  // track for failure cleanup (A9)
         }
 
-        report.keys_migrated += 1;
+        report.keys_planned.push(super::report::KeyPlanReport {
+            v1_key_id: v1_key.key_id.clone(),
+            v2_key_hash: key_hash.0.clone(),
+            v2_key_file: v1_key.name.as_ref().map(|n| target_v2_data_dir.join("keys").join(format!("{}.key", n)).to_string_lossy().to_string()).unwrap_or_default(),
+            permissions: v1_key.permissions.clone(),
+            primary_scope: primary_scope_id,
+            was_v1_master: v1_key.entry_scope.is_none() && v1_key.permissions == "maintenance",
+        });
     }
 
     Ok(())
@@ -5080,26 +5794,33 @@ Commands::MigrateFromV1 { v1_db_path, target_v2_data_dir, confirm_backup_taken, 
 
 <mandatory>All checklist items must be verified before proceeding.</mandatory>
 
-- [ ] `migrate_from_v1` is master-key gated (verifies key_hash matches a `is_master_key=1` row in V2 keys, OR — for first-time install — no V2 keys exist yet AND the master key file has the correct format)
-- [ ] `confirm_backup_taken=true` is required (refusal error otherwise)
-- [ ] V2 data dir existence triggers refusal unless `--force` (force renames existing dir to `.bak.<timestamp>`)
-- [ ] Atomicity: introduce a fault mid-migration (e.g., write a malformed V1 entry, watch transform error) → verify created V2 scope .db files are deleted + migration_state row status='failed'
-- [ ] V1 DB renamed to `.bak.aletheia-v1-pre-migration` ONLY on success
-- [ ] All transforms preserve V1 row counts (verified by post-migration count comparison)
-- [ ] Memory history version numbering: V1's "1 current + N history" → V2's "1..N+1 versions, N+1 is current"
+- [ ] `aletheia-v2 migrate-from-v1` is V2-master-key gated (verifies key_hash matches a `is_master_key=1` row in V2 keys; V2 setup must have run first to mint the V2 master)
+- [ ] `--confirm-backup-taken` flag is required (refusal error otherwise)
+- [ ] **Side-by-side install verified**: V1 DB at `~/.aletheia/data/aletheia.db` is NEVER renamed or modified by V2 migration (read-only access only). After successful migration, V1 DB exists exactly as before. NO `.bak` rename — that was the old single-install model; now removed.
+- [ ] V2 install at `~/.aletheia-v2/` already exists (created by `aletheia-v2 setup`); `migrate_from_v1` uses `OPEN_READ_WRITE` (not `CREATE`) on `scope_registry.db`
+- [ ] **Active V1 session detection (A6)**: `scan_active_v1_sessions` enumerates `~/.aletheia-v2/sockets/aletheia-*.sock` and filters by `kill(pid, 0)`; refusal returned if any are alive UNLESS `--ignore-active-sessions`
+- [ ] **V1 schema_version constraint (A8)**: refusal returned if introspected schema_version < 4 with clear error message
+- [ ] Atomicity: introduce a fault mid-migration → verify ALL created V2 scope .db files AND V2 key files are deleted + migration_state row status='failed' AND `is_applying=0` (per A10: full-cleanup case flips flag back)
+- [ ] All transforms preserve V1 row counts (verified by `crate::migrate::validation::verify_row_counts` post-migration; per A5)
+- [ ] **Memory history version numbering two-pass (A1)**: V1's "1 current + N history" → V2's "1..N+1 versions, N+1 is current". Verify via test with 3-version V1 chain → V2 entries with versions 1, 2, 3, 4 (4 = current; 1-3 = history with sequential changed_at timestamps)
+- [ ] **`fetch_v1_tags_for_entry` (A2)**: SQL JOIN `tags JOIN entry_tags ON entry_tags.tag_id = tags.id WHERE entry_tags.entry_id = ?` is used; tags returned in deterministic (alphabetical) order
 - [ ] Tags denormalized: V1's normalized tags+entry_tags → V2's entries.tags JSON array per row
 - [ ] V1.memory_entries.key → tag `key:<value>` on V2 row (Q5A)
 - [ ] V1.entries.id → tag `entry_id_legacy:<v1-uuid>` on V2 row (Q5A)
 - [ ] V1.journal_entries.sub_section → tag `sub_section:<value>` on V2 row (Q5D)
-- [ ] memory_journal_provenance preserved with translated IDs (Q5B + IS-6)
-- [ ] V1 keys → V2 keys table with key_hash = SHA-256(raw_value); raw values written to `~/.aletheia/keys/<name>.key` files (mode 0600); key_value column NEVER stored in V2 DB
+- [ ] **Provenance translation pass (A3)**: `crate::migrate::provenance::translate_all` runs after all per-scope transforms; walks V1 `memory_journal_provenance` → INSERTs into each scope's V2 `memory_journal_provenance` using id_mapping; orphan rows logged
+- [ ] **Handoff count (A4)**: `count_handoffs_per_scope` JOINs through V1 `keys.entry_scope` to count handoffs per scope (no longer hardcoded 0)
+- [ ] V1 keys → V2 keys table with key_hash = SHA-256(raw_value); raw values written to `~/.aletheia-v2/keys/<name>.key` files (mode 0600); key_value column NEVER stored in V2 DB
 - [ ] V1 revoked=1 keys → V2 revoked_at=NOW (Phase 8 migration uses NOW since V1 didn't track when revocation happened)
+- [ ] **Master-key flow Option 1 verified**: V2 master key (separate from V1 master) was minted by `aletheia-v2 setup` BEFORE migration; ALL V1 keys (including V1's master) inserted into V2 keys with `is_master_key=0`
+- [ ] **Failure cleanup includes V2 key files (A9)**: `created_key_files: Vec<PathBuf>` is populated by `keys::transform`; on failure, both `created_scope_files` AND `created_key_files` are deleted
 - [ ] Lazy first-claim trigger: `scopes.digest_pending_v1_migration=1` set per scope; claim() checks and enqueues digest_queue trigger=entry_threshold; flag flips to 0 post-enqueue
 - [ ] FTS5 bulk-insert optimization in place: per-scope transform DROPs FTS5 triggers + REBUILDs at end (verify performance test shows ≥5× speedup vs trigger-per-row)
+- [ ] **Dry-run report schema (A7)**: `MigrationReport::dry_run` produces structured JSON matching the documented schema; both JSON and markdown variants written to `~/.aletheia-v2/dry-run-reports/<timestamp>.{json,md}`
+- [ ] **Deterministic scope_uuid in dry-run**: `deterministic_scope_uuid(namespace)` produces SHA-256-derived UUID so dry-run report and actual migration produce matching scope_uuid values
 - [ ] Audit events emitted: `migration.v1_migration_started`, `migration.v1_migration_scope_completed`, `migration.v1_migration_completed`, `migration.v1_migration_failed`
-- [ ] CLI `aletheia migrate-from-v1 <path> --confirm-backup-taken` works end-to-end (E2E test against synthetic V1 DB)
-- [ ] `aletheia migrate-from-v1 <path> --dry-run` produces the report without writing
-- [ ] Phase 2 retroactive amendment: `install_all(&conn)` functions exist on `crate::db::scope_schema` and `crate::db::registry_schema` (called by Phase 8)
+- [ ] CLI `aletheia-v2 migrate-from-v1 <path> --confirm-backup-taken` works end-to-end (E2E test against the actual CEO V1 DB per `decisions/aletheia-v2/migration-walkthrough.md`)
+- [ ] CLI `aletheia-v2 migrate-from-v1 <path> --dry-run` produces both JSON + markdown reports without writing any per-scope .db or key files
 - [ ] Run context compaction (`/lethe compact`) before launching Phase 10
 
 ### Known Risks
@@ -5122,7 +5843,7 @@ Commands::MigrateFromV1 { v1_db_path, target_v2_data_dir, confirm_backup_taken, 
 
 **Phase 10 sub-tasks** (4 parallel):
 1. cargo-dist setup (`Cargo.toml` workspace metadata + `dist-workspace.toml` config)
-2. JS wrapper shim (`packages/aletheia/index.js` with stdio inherit + signal forwarding)
+2. JS wrapper shim (`packages/aletheia-v2/index.js` with stdio inherit + signal forwarding)
 3. GitHub Actions multi-target matrix (`.github/workflows/release.yml`)
 4. npm publish workflow + documentation (README, install instructions, V1 → V2 migration guide for end users)
 
@@ -5172,8 +5893,8 @@ src/
 │   └── deprecation.rs         # Tool deprecation lifecycle: deprecated/removed states + response wrapping + dedup'd usage tracking
 ├── sweepers/
 │   ├── mod.rs
-│   ├── session_orphans.rs     # Prune ~/.aletheia/sessions/<dead_pid>.session_id files (5min cadence)
-│   └── sdk_runtime.rs         # Prune ~/.aletheia/sdk-runtime/<queue_id>/ directories older than 24h
+│   ├── session_orphans.rs     # Prune ~/.aletheia-v2/sessions/<dead_pid>.session_id files (5min cadence)
+│   └── sdk_runtime.rs         # Prune ~/.aletheia-v2/sdk-runtime/<queue_id>/ directories older than 24h
 └── shadow/
     ├── mod.rs                 # Aggregator
     ├── comparison_ranker.rs   # `ShadowComparisonRanker` trait + NoOpComparisonRanker (V2 default)
@@ -5365,10 +6086,96 @@ pub fn recover(conn: &Connection, orphan: &OrphanEvent) -> Result<RecoveryAction
     }
 }
 
-fn check_source_tombstoned(_conn: &Connection, _entry_id: &str, _scope: &Option<String>) -> Result<bool> { todo!("query attached scope") }
-fn check_target_inserted(_conn: &Connection, _new_entry_id: &str, _target_scope: &str) -> Result<bool> { todo!() }
-fn tombstone_source(_conn: &Connection, _entry_id: &str, _scope: &Option<String>, _new_entry_id: &str, _target: &str) -> Result<()> { todo!() }
-fn insert_target(_conn: &Connection, _source_entry_id: &str, _source_scope: &Option<String>, _new_entry_id: &str, _target: &str) -> Result<()> { todo!() }
+/// Source row in source scope is tombstoned iff its valid_to is non-NULL with reason matching `promoted_to:<new_entry_id>@*`.
+/// Implementation queries the source scope (attached as e.g. `w_<short>`) via the alias
+/// resolved from the audit-log event's `scope_id` field through `ConnectionManager::alias_for`.
+fn check_source_tombstoned(conn: &Connection, entry_id: &str, scope_id: &Option<String>) -> Result<bool> {
+    let alias = scope_alias_for(scope_id.as_deref())?;
+    let q = format!(
+        "SELECT EXISTS(
+            SELECT 1 FROM {alias}.entries
+            WHERE entry_id = ? AND valid_to IS NOT NULL
+              AND invalidation_reason LIKE 'promoted_to:%'
+         )",
+        alias = alias
+    );
+    conn.query_row(&q, rusqlite::params![entry_id], |row| row.get(0)).map_err(Into::into)
+}
+
+/// Target row in target scope exists iff a current (valid_to IS NULL) row with the new_entry_id is present.
+fn check_target_inserted(conn: &Connection, new_entry_id: &str, target_scope: &str) -> Result<bool> {
+    let alias = scope_alias_for(Some(target_scope))?;
+    let q = format!(
+        "SELECT EXISTS(SELECT 1 FROM {alias}.entries WHERE entry_id = ? AND valid_to IS NULL)",
+        alias = alias
+    );
+    conn.query_row(&q, rusqlite::params![new_entry_id], |row| row.get(0)).map_err(Into::into)
+}
+
+/// Idempotent: sets source's valid_to + invalidation_reason if not already set.
+fn tombstone_source(conn: &Connection, entry_id: &str, scope_id: &Option<String>, new_entry_id: &str, target_scope: &str) -> Result<()> {
+    let alias = scope_alias_for(scope_id.as_deref())?;
+    let reason = format!("promoted_to:{}@{}", new_entry_id, target_scope);
+    let sql = format!(
+        "UPDATE {alias}.entries
+         SET valid_to = CURRENT_TIMESTAMP, invalidation_reason = ?
+         WHERE entry_id = ? AND valid_to IS NULL",
+        alias = alias
+    );
+    conn.execute(&sql, rusqlite::params![reason, entry_id])?;
+    Ok(())
+}
+
+/// Idempotent: copies source content + tags to target scope as a new entry; uses INSERT OR IGNORE
+/// against the content_hash unique-by-active constraint to avoid double-insert if reconciler re-runs.
+fn insert_target(conn: &Connection, source_entry_id: &str, source_scope: &Option<String>, new_entry_id: &str, target_scope: &str) -> Result<()> {
+    let src_alias = scope_alias_for(source_scope.as_deref())?;
+    let tgt_alias = scope_alias_for(Some(target_scope))?;
+
+    // Read source row (could be the live row pre-tombstone or the tombstoned row depending on prior partial state)
+    let src_row: Option<(String, String, String, i32)> = conn.query_row(
+        &format!("SELECT content, tags, COALESCE(reasoning_trace, ''), critical_flag FROM {alias}.entries
+                  WHERE entry_id = ? ORDER BY version DESC LIMIT 1", alias = src_alias),
+        rusqlite::params![source_entry_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).optional()?;
+
+    let (content, tags, reasoning_trace, critical_flag) = src_row.ok_or_else(|| {
+        crate::error::AletheiaError::Other(format!("Source entry {} not found in scope alias {}", source_entry_id, src_alias))
+    })?;
+
+    let content_hash = {
+        use sha2::{Sha256, Digest};
+        let mut h = Sha256::new();
+        h.update(content.as_bytes());
+        h.update(target_scope.as_bytes());
+        hex::encode(h.finalize())
+    };
+
+    // INSERT OR IGNORE on content_hash for idempotency (if reconciler ran already, target row exists)
+    conn.execute(
+        &format!(
+            "INSERT OR IGNORE INTO {alias}.entries
+             (entry_id, version, entry_class, content, content_hash, tags, supersedes_entry_id, reasoning_trace, critical_flag)
+             VALUES (?, 1, 'memory', ?, ?, ?, ?, NULLIF(?, ''), ?)",
+            alias = tgt_alias
+        ),
+        rusqlite::params![new_entry_id, content, content_hash, tags, source_entry_id, reasoning_trace, critical_flag],
+    )?;
+    Ok(())
+}
+
+/// Resolve scope_id (from audit log) to its attached-DB alias on the current connection.
+/// Returns "main" for the primary scope, "w_<short>" / "r_<short>" for attached scopes.
+/// If the scope is not currently attached on this connection, the reconciler must skip
+/// this orphan (cannot recover scopes outside the current session's claim visibility);
+/// returns Err in that case so the caller can log + skip.
+fn scope_alias_for(scope_id: Option<&str>) -> Result<&'static str> {
+    // Real implementation: takes a `&ConnectionManager` and looks up via its `alias_for(ScopeId)` method.
+    // For the reconciler running at startup, this requires the master key's full claim attached.
+    // Sketch — actual signature in the implementation includes the ConnectionManager reference.
+    match scope_id { Some(_) => Ok("main"), None => Ok("main") }
+}
 
 #[derive(Debug)]
 pub enum RecoveryAction {
@@ -5615,6 +6422,16 @@ use std::sync::Arc;
 use crate::injection::candidate::Candidate;
 use crate::injection::context::Context;
 
+/// Metadata bundle passed from ScoringEngine.top_k_filtered → ShadowObserver.observe_sync().
+/// Lets ShadowObserver write a contextually-rich comparison_log entry.
+#[derive(Debug, Clone)]
+pub struct ObservationMetadata {
+    pub hook_event: &'static str,           // "l1" or "l2"
+    pub scope_id: Option<String>,
+    pub session_id: Option<String>,
+    pub conn: Arc<tokio::sync::Mutex<rusqlite::Connection>>,
+}
+
 pub struct ShadowObserver {
     pub enabled: bool,
     pub sampling_rate: f64,
@@ -5622,17 +6439,15 @@ pub struct ShadowObserver {
 }
 
 impl ShadowObserver {
-    /// Called by ScoringEngine after producing the emitted ranking.
-    /// If sampling fires, computes the comparison ranking and logs both + diff.
-    pub fn observe(
+    /// Sync entry point called by ScoringEngine.top_k_filtered (which is itself sync).
+    /// We need DB write capability but ScoringEngine is sync — use try_lock + spawn for the write.
+    /// The fire-and-forget pattern means observation latency does not block injection.
+    pub fn observe_sync(
         &self,
-        conn: &rusqlite::Connection,
-        hook_event: &str,                        // "l1" or "l2"
-        scope_id: Option<&str>,
-        session_id: Option<&str>,
+        meta: ObservationMetadata,
         candidates: &[Candidate],
         context: &Context,
-        emitted_ranking: &[String],              // entry_ids actually injected
+        emitted_ranking: &[String],
     ) -> crate::error::Result<()> {
         if !self.enabled { return Ok(()); }
         if !crate::shadow::sampler::should_sample(self.sampling_rate) { return Ok(()); }
@@ -5642,7 +6457,23 @@ impl ShadowObserver {
             None => return Ok(()),  // ranker opted out (e.g., NoOpComparisonRanker)
         };
 
-        crate::shadow::log::write_comparison(conn, hook_event, scope_id, session_id, emitted_ranking, &comparison)?;
+        // Defer DB write to a tokio task so ScoringEngine doesn't block on connection lock contention
+        let emitted = emitted_ranking.to_vec();
+        let ranker_name = self.ranker.name().to_string();
+        tokio::spawn(async move {
+            let c = meta.conn.lock().await;
+            if let Err(e) = crate::shadow::log::write_comparison(
+                &c,
+                meta.hook_event,
+                meta.scope_id.as_deref(),
+                meta.session_id.as_deref(),
+                &emitted,
+                &comparison,
+                &ranker_name,
+            ) {
+                tracing::warn!("shadow log write failed: {}", e);
+            }
+        });
         Ok(())
     }
 }
@@ -5655,12 +6486,14 @@ pub fn write_comparison(
     session_id: Option<&str>,
     emitted: &[String],
     comparison: &[String],
+    ranker_name: &str,                       // identifies which comparison ranker produced the comparison ranking
 ) -> crate::error::Result<()> {
     let diff = compute_diff(emitted, comparison);
+    let diff_with_ranker = serde_json::json!({"ranker": ranker_name, "diff": diff});
     conn.execute(
         "INSERT INTO shadow_comparison_log (hook_event, scope_id, session_id, emitted_ranking, comparison_ranking, diff_summary)
          VALUES (?, ?, ?, ?, ?, ?)",
-        rusqlite::params![hook_event, scope_id, session_id, serde_json::to_string(emitted)?, serde_json::to_string(comparison)?, serde_json::to_string(&diff)?],
+        rusqlite::params![hook_event, scope_id, session_id, serde_json::to_string(emitted)?, serde_json::to_string(comparison)?, diff_with_ranker.to_string()],
     )?;
     Ok(())
 }
@@ -5723,10 +6556,10 @@ register_shadow_mode_observer(&mut registry, conn.clone(), settings.clone()).awa
 
 ### Integration Points
 - **IS-9 (audit log → reconciler):** Reconciler reads `sys_audit_log` via the established event vocabulary. Phase 9 adds the `reconciliation.*` event category — events: `reconciliation_orphan_unresolved`, `reconciliation_backfilled_promotion_committed`, `reconciliation_completed_promotion_tombstone`, `reconciliation_completed_promotion_target_insert`, `reconciliation_migration_orphan_surfaced`, `reconciliation_feature_wrap_resynthesized`.
-- **IS-10 (tool deprecation → all V2 tools):** Every Phase 5 tool's `#[tool]` handler calls `deprecation::check_and_log` as part of `AuthContext::precheck()` (Phase 5 retroactive amendment — add the call to the precheck flow). `deprecation::wrap_response` is called by the tool's response builder if `deprecation_state` reports deprecated. NO tool can bypass these checks.
+- **IS-10 (tool deprecation → all V2 tools):** Every Phase 5 tool's `#[tool]` handler calls `deprecation::check_and_log` as part of `AuthContext::precheck()` — the precheck flow is defined in Phase 5 with the deprecation hook included. `deprecation::wrap_response` is called by the tool's response builder if `deprecation_state` reports deprecated. NO tool can bypass these checks.
 - **Phase 4 Registrar:** `register_reconciler_sweep`, `register_session_orphan_sweep`, `register_sdk_runtime_cleanup`, `register_shadow_mode_observer` all uncommented in `start_server()`.
 - **Phase 5 → Phase 9:** Phase 5's `reconcile()` MCP tool dispatches to Phase 9's reconciler. Phase 5's `purge_audit_log()` MCP tool calls Phase 2's `audit_log::purge_audit_log()` helper.
-- **Phase 6 → Phase 9:** Phase 6's `ScoringEngine.top_k_filtered` accepts the observer; Phase 9 wires the observer in. Note: this is a Phase 6 retroactive amendment — extend the function signature with `Option<&ShadowObserver>`.
+- **Phase 6 → Phase 9:** Phase 6's `ScoringEngine.top_k_filtered` already accepts `Option<&ShadowObserver>` + `Option<ObservationMetadata>` parameters; Phase 9 constructs the observer (with V2's `NoOpComparisonRanker` default) and L1/L2 builders pass it through.
 
 ### Expected Outcomes
 - `cargo test` passes for reconciler, deprecation, sweepers, shadow modules
@@ -5772,14 +6605,14 @@ register_shadow_mode_observer(&mut registry, conn.clone(), settings.clone()).awa
 - [ ] **`tool_removed` returns FATAL error** — not a deprecation warning (per design Topic 7)
 - [ ] All Phase 5 tool handlers call `deprecation::check_and_log` (verify via grep on `AuthContext::precheck`)
 - [ ] Tool responses include `<deprecated since="..." removal="..." hint="..."/>` notice when applicable
-- [ ] Session orphan sweep deletes `~/.aletheia/sessions/<dead_pid>.session_id` files
-- [ ] sdk-runtime cleanup deletes `~/.aletheia/sdk-runtime/<queue_id>/` dirs older than 24h
+- [ ] Session orphan sweep deletes `~/.aletheia-v2/sessions/<dead_pid>.session_id` files
+- [ ] sdk-runtime cleanup deletes `~/.aletheia-v2/sdk-runtime/<queue_id>/` dirs older than 24h
 - [ ] Shadow Mode `NoOpComparisonRanker` is V2's default (returns None — no comparison log entries)
 - [ ] Shadow Mode infrastructure plumbing verified: `shadow_comparison_log` table writable, sampling decision works, observer wires into ScoringEngine
 - [ ] `analyze_shadow_mode` MCP tool is master-key only (verify in `system_tools.rs`)
 - [ ] Phase 4 Registrar: 4 new `register_X` calls UNCOMMENTED in `start_server()` (`register_reconciler_sweep`, `register_session_orphan_sweep`, `register_sdk_runtime_cleanup`, `register_shadow_mode_observer`)
-- [ ] **Phase 5 retroactive amendment verified:** `AuthContext::precheck()` includes `deprecation::check_and_log` call
-- [ ] **Phase 6 retroactive amendment verified:** `ScoringEngine.top_k_filtered` accepts `Option<&ShadowObserver>`; L1/L2 builders pass it
+- [ ] `AuthContext::precheck()` includes the `deprecation::check_and_log` call — verify by reading Phase 5's `auth_context.rs` (the call is part of the precheck flow as written)
+- [ ] `ScoringEngine.top_k_filtered` accepts `Option<&ShadowObserver>` + `Option<ObservationMetadata>` parameters — verify by reading Phase 6's signature; L1/L2 builders pass these through
 - [ ] Audit events: `reconciliation.reconciliation_*`, `deprecation.tool_deprecated_usage`, `deprecation.tool_removed_usage_attempt`, `deprecation.shadow_mode_enabled`, `deprecation.shadow_mode_disabled`, `deprecation.shadow_analysis_requested`
 - [ ] Run context compaction (`/lethe compact`) before launching Phase 10
 
@@ -5805,7 +6638,7 @@ Phase 10 is the final phase. With all implementation complete, distribution + re
 
 Phase 10 is the smallest plan section by code volume but the most operationally consequential — it's what users actually install.
 
-After Phase 10, the V2 Conductor pipeline is complete. Final integration test: install via `npm install -g aletheia` from the just-published package, run `aletheia setup`, run `aletheia migrate-from-v1 ~/.aletheia/data/aletheia.db.bak`, verify a Claude Code session can claim and write/read entries.
+After Phase 10, the V2 Conductor pipeline is complete. Final integration test: install via `npm install -g aletheia-v2` from the just-published package, run `aletheia-v2 setup`, run `aletheia-v2 migrate-from-v1 ~/.aletheia/data/aletheia.db --confirm-backup-taken`, verify a Claude Code session (with `aletheia-v2` registered as an MCP server) can claim and write/read entries while V1 continues running independently.
 
 Context management: Run `/lethe compact` before Phase 10.
 </guidance>
@@ -5819,11 +6652,11 @@ Context management: Run `/lethe compact` before Phase 10.
 
 <core>
 ### Objective
-Package the V2 Rust binary for `npm install -g aletheia` distribution using the `optionalDependencies` pattern (esbuild/swc/biome/oxc model). Set up `cargo-dist` for multi-target binary builds via GitHub Actions matrix; ship a JS wrapper shim that handles signal forwarding and stdio inheritance correctly; publish to npm; document install + V1→V2 migration for end users. After Phase 10, V2 is publicly installable.
+Package the V2 Rust binary for `npm install -g aletheia-v2` distribution using the `optionalDependencies` pattern (esbuild/swc/biome/oxc model). Set up `cargo-dist` for multi-target binary builds via GitHub Actions matrix; ship a JS wrapper shim that handles signal forwarding and stdio inheritance correctly; publish to npm; document install + V1→V2 migration for end users. After Phase 10, V2 is publicly installable.
 
 ### Prerequisites
 - Phases 1-9 complete: V2 binary builds, all functionality works in dev
-- npm account with publish access to `aletheia` (or chosen package name); ANTHROPIC_NPM_TOKEN secret in GitHub Actions
+- npm account with publish access to `aletheia-v2` (or chosen package name); ANTHROPIC_NPM_TOKEN secret in GitHub Actions
 - GitHub Actions enabled on the repo
 - (Optional) Apple Developer account for Mac code signing; Microsoft cert for Windows code signing — defer if not yet needed
 
@@ -5844,7 +6677,7 @@ Package the V2 Rust binary for `npm install -g aletheia` distribution using the 
 ├── Cargo.toml                 # Workspace metadata; add cargo-dist config
 ├── dist-workspace.toml        # cargo-dist workspace configuration
 ├── packages/
-│   └── aletheia/              # npm wrapper package
+│   └── aletheia-v2/              # npm wrapper package
 │       ├── package.json       # name + bin + optionalDependencies for platform packages
 │       ├── index.js           # JS wrapper shim
 │       └── README.md          # User-facing install docs
@@ -5881,7 +6714,7 @@ windows-archive = ".zip"
 
 # CRITICAL: enable the modern npm distribution pattern
 [workspace.metadata.dist.npm-installer]
-package = "aletheia"
+package = "aletheia-v2"
 scope = ""                                # Or "@yourorg/" for scoped publishing
 
 # Strip binaries for size
@@ -5892,7 +6725,7 @@ lto = "thin"
 codegen-units = 1
 ```
 
-**JS wrapper shim (`packages/aletheia/index.js`):**
+**JS wrapper shim (`packages/aletheia-v2/index.js`):**
 
 ```javascript
 #!/usr/bin/env node
@@ -5913,11 +6746,11 @@ function getBinaryPath() {
 
   // Map Node platform/arch → cargo-dist npm package suffix
   const targets = {
-    'linux-x64': 'aletheia-x86_64-unknown-linux-gnu',
-    'linux-arm64': 'aletheia-aarch64-unknown-linux-gnu',
-    'darwin-x64': 'aletheia-x86_64-apple-darwin',
-    'darwin-arm64': 'aletheia-aarch64-apple-darwin',
-    'win32-x64': 'aletheia-x86_64-pc-windows-msvc',
+    'linux-x64': 'aletheia-v2-x86_64-unknown-linux-gnu',
+    'linux-arm64': 'aletheia-v2-aarch64-unknown-linux-gnu',
+    'darwin-x64': 'aletheia-v2-x86_64-apple-darwin',
+    'darwin-arm64': 'aletheia-v2-aarch64-apple-darwin',
+    'win32-x64': 'aletheia-v2-x86_64-pc-windows-msvc',
   };
 
   const targetPkg = targets[`${platform}-${arch}`];
@@ -5930,10 +6763,10 @@ function getBinaryPath() {
   let binPath;
   try {
     const pkgRoot = path.dirname(require.resolve(`${targetPkg}/package.json`));
-    const binName = platform === 'win32' ? 'aletheia.exe' : 'aletheia';
+    const binName = platform === 'win32' ? 'aletheia-v2.exe' : 'aletheia-v2';
     binPath = path.join(pkgRoot, 'bin', binName);
   } catch (e) {
-    console.error(`Aletheia: platform package ${targetPkg} not installed. Try \`npm install -g aletheia\` again.`);
+    console.error(`Aletheia: platform package ${targetPkg} not installed. Try \`npm install -g aletheia-v2\` again.`);
     console.error(`Detail: ${e.message}`);
     process.exit(1);
   }
@@ -5974,15 +6807,15 @@ child.on('error', (err) => {
 });
 ```
 
-**Wrapper `packages/aletheia/package.json`:**
+**Wrapper `packages/aletheia-v2/package.json`:**
 
 ```json
 {
-  "name": "aletheia",
+  "name": "aletheia-v2",
   "version": "2.0.0",
   "description": "Aletheia V2 — structured memory MCP server for Claude Code",
   "bin": {
-    "aletheia": "./index.js"
+    "aletheia-v2": "./index.js"
   },
   "main": "./index.js",
   "files": ["index.js", "README.md"],
@@ -5990,22 +6823,22 @@ child.on('error', (err) => {
     "node": ">=18.0.0"
   },
   "optionalDependencies": {
-    "aletheia-x86_64-unknown-linux-gnu": "2.0.0",
-    "aletheia-aarch64-unknown-linux-gnu": "2.0.0",
-    "aletheia-x86_64-apple-darwin": "2.0.0",
-    "aletheia-aarch64-apple-darwin": "2.0.0",
-    "aletheia-x86_64-pc-windows-msvc": "2.0.0"
+    "aletheia-v2-x86_64-unknown-linux-gnu": "2.0.0",
+    "aletheia-v2-aarch64-unknown-linux-gnu": "2.0.0",
+    "aletheia-v2-x86_64-apple-darwin": "2.0.0",
+    "aletheia-v2-aarch64-apple-darwin": "2.0.0",
+    "aletheia-v2-x86_64-pc-windows-msvc": "2.0.0"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/<owner>/aletheia.git"
+    "url": "https://github.com/<owner>/aletheia-v2.git"
   },
   "license": "MIT",
   "keywords": ["mcp", "claude-code", "memory", "anthropic"]
 }
 ```
 
-cargo-dist generates the per-platform packages (`aletheia-x86_64-unknown-linux-gnu/`, etc.) automatically — each contains only the binary + a minimal package.json with strict `os` and `cpu` fields so npm/pnpm/yarn install only the matching one.
+cargo-dist generates the per-platform packages (`aletheia-v2-x86_64-unknown-linux-gnu/`, etc.) automatically — each contains only the binary + a minimal package.json with strict `os` and `cpu` fields so npm/pnpm/yarn install only the matching one.
 
 **GitHub Actions release workflow (`.github/workflows/release.yml`):**
 
@@ -6068,11 +6901,11 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }} --profile dist
       - name: Strip
         if: runner.os != 'Windows'
-        run: strip target/${{ matrix.target }}/dist/aletheia
+        run: strip target/${{ matrix.target }}/dist/aletheia-v2
       - uses: actions/upload-artifact@v4
         with:
-          name: aletheia-${{ matrix.target }}
-          path: target/${{ matrix.target }}/dist/aletheia*
+          name: aletheia-v2-${{ matrix.target }}
+          path: target/${{ matrix.target }}/dist/aletheia-v2*
 
   publish-npm:
     needs: [plan, build-binaries]
@@ -6118,21 +6951,21 @@ jobs:
 ## Install
 
 ```bash
-npm install -g aletheia
+npm install -g aletheia-v2
 ```
 
-This installs the `aletheia` CLI plus the platform-specific binary. On first install, npm downloads ~10-15MB of platform-specific code.
+This installs the `aletheia-v2` CLI plus the platform-specific binary. On first install, npm downloads ~10-15MB of platform-specific code.
 
 ## First-time setup
 
 ```bash
-aletheia setup
+aletheia-v2 setup
 ```
 
 This:
-1. Creates `~/.aletheia/` (data, keys, sessions, sockets, sdk-runtime, scopes directories)
-2. Generates `~/.aletheia/settings.toml` with defaults
-3. Generates a master key, writes to `~/.aletheia/keys/master.key`
+1. Creates `~/.aletheia-v2/` (data, keys, sessions, sockets, sdk-runtime, scopes directories)
+2. Generates `~/.aletheia-v2/settings.toml` with defaults
+3. Generates a master key, writes to `~/.aletheia-v2/keys/master.key`
 4. Registers the SessionStart hook + L1/L2 injection hooks in `~/.claude/settings.json`
 5. Prints the master key value (record + delete the file if you don't trust filesystem perms)
 
@@ -6142,75 +6975,98 @@ This:
 claude
 # Inside Claude Code:
 > /mcp
-# Should list aletheia among available servers
-> Use the aletheia whoami tool
+# Should list aletheia-v2 among available servers
+> Use the aletheia-v2 whoami tool
 # Should return your master key's permission set
 ```
 
 ## Uninstall
 
 ```bash
-npm uninstall -g aletheia
-# Optional: rm -rf ~/.aletheia ~/.claude/settings.local.json (or just remove aletheia entries)
+npm uninstall -g aletheia-v2
+# Optional: rm -rf ~/.aletheia-v2/  (V2 data dir)
+# To also remove V2 entries from CC config, edit ~/.claude/settings.json and remove the "aletheia-v2" MCP entry + its hook entries.
+# (V1 install at ~/.aletheia/ + V1 npm package "aletheia" remain untouched if you had them installed alongside.)
 ```
 
 ## Troubleshooting
 
 **"Aletheia: platform package not installed"** — your platform isn't supported. Currently supported: linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64. File an issue if you need another.
 
-**MCP connection times out on first install** — slow network. The first `npx`-style invocation downloads ~10-15MB; on slow connections, this can exceed Claude Code's MCP init timeout. Run `aletheia --version` once manually to pre-cache the binary, then start Claude Code.
+**MCP connection times out on first install** — slow network. The first `npx`-style invocation downloads ~10-15MB; on slow connections, this can exceed Claude Code's MCP init timeout. Run `aletheia-v2 --version` once manually to pre-cache the binary, then start Claude Code.
 
-**Stale socket on restart** — Aletheia cleans up its own socket on graceful shutdown. If a previous server crashed, run `rm ~/.aletheia/sockets/aletheia-*.sock` then start fresh.
+**Stale socket on restart** — Aletheia cleans up its own socket on graceful shutdown. If a previous server crashed, run `rm ~/.aletheia-v2/sockets/aletheia-*.sock` then start fresh.
 ```
 
 **Documentation (`docs/MIGRATION-FROM-V1.md`):**
 
 ```markdown
-# Migrating from Aletheia V1 to V2
+# Migrating from Aletheia V1 to V2 (side-by-side install model)
 
 ## Before you start
 
 1. **Back up your V1 data**: `cp ~/.aletheia/data/aletheia.db ~/aletheia-v1-backup-$(date +%Y%m%d).db`
-2. **Stop all Claude Code sessions** that have V1 active. Migration cannot run while V1 is being written to.
-3. **Install V2**: `npm install -g aletheia` (V1 and V2 share the npm package name; V2 replaces V1)
-4. **Run V2 setup**: `aletheia setup` (creates V2 directory structure alongside V1's data — V2 uses `~/.aletheia/scopes/` for scope DBs; V1's `~/.aletheia/data/aletheia.db` stays untouched)
+2. **Stop all Claude Code sessions** that have V1 active (the migration tool refuses by default if it detects active V1 MCP servers; pass `--ignore-active-sessions` to override at your own risk).
+3. **Install V2 alongside V1**: `npm install -g aletheia-v2`. This installs the V2 binary (`aletheia-v2`) at a new path; your existing V1 install (`aletheia`) is NOT touched. Both can run simultaneously.
+4. **Run V2 setup**: `aletheia-v2 setup`. This creates `~/.aletheia-v2/` (data dir SEPARATE from V1's `~/.aletheia/`), generates a fresh V2 master key at `~/.aletheia-v2/keys/master.key`, registers V2's hooks in `~/.claude/settings.json` as a NEW set of hook entries (V1's hooks remain registered separately).
 
 ## Run migration
 
 ```bash
-aletheia migrate-from-v1 ~/.aletheia/data/aletheia.db --confirm-backup-taken
+aletheia-v2 migrate-from-v1 ~/.aletheia/data/aletheia.db --confirm-backup-taken
 ```
 
 This:
-- Reads V1 SQLite as data only (no V1 code involvement)
-- Creates one `~/.aletheia/scopes/<scope_uuid>.db` per V1 namespace
+- Reads V1 SQLite as data only (no V1 code involvement, read-only access)
+- Creates one `~/.aletheia-v2/scopes/<scope_uuid>.db` per V1 namespace
 - Transforms V1's 2-level hierarchy into V2's flat per-row entries model
-- Migrates V1 keys (preserves your existing key files; updates DB metadata to V2 schema)
-- Renames V1 DB to `~/.aletheia/data/aletheia.db.bak.aletheia-v1-pre-migration`
-- Emits a migration report to stdout
+- Migrates V1 keys into V2's `~/.aletheia-v2/keys/` (V1 master key becomes a V2 maintenance sub-key; the V2 master from `setup` remains the trust root)
+- **DOES NOT rename or modify the V1 DB** — V1 stays exactly as it was
+- Writes a migration report to `~/.aletheia-v2/dry-run-reports/<timestamp>.{json,md}` (the actual run also produces this report)
 
 **Time estimate:** ~30 seconds per 1000 entries. Large corpora (10k+) may take several minutes.
 
-**Disk space:** During migration, V1 + V2 + .bak occupy ~3× the original V1 size. Ensure adequate free space.
+**Disk space:** During migration, V1 + V2 occupy ~2× the original V1 size (V1 DB + V2 directory). Ensure adequate free space.
+
+**Optional dry-run first:** `aletheia-v2 migrate-from-v1 ~/.aletheia/data/aletheia.db --dry-run` writes the planned report (JSON + markdown) without touching anything. The `v2_scope_uuid` values in the dry-run report are deterministic (SHA-256 of namespace) and will match the actual migration's output.
 
 ## After migration
 
-- Your existing V1 keys still work — claim with the same key value as before
-- Your existing V1 entries are now in V2 with all history preserved
-- First claim of each scope triggers a one-time digest pass (synthesizes memories from V1's journals into V2 memory entries). This may take a few minutes per scope; runs in the background.
-- For large single-scope corpora, use `--stage-digest-as-mass-ingest` to defer digest until you can supervise the bulk operation
+- Both V1 and V2 are now installed and runnable. Claude Code sessions that have V1 registered as an MCP server keep using V1; sessions that have V2 registered use V2.
+- Your existing V1 key values still work in V2 — claim with the same key value; V2 will recognize it via SHA-256 hash.
+- Your existing V1 entries are now in V2 with all history preserved.
+- First claim of each scope in V2 triggers a one-time digest pass (synthesizes memories from V1's journals into V2 memory entries). This may take a few minutes per scope; runs in the background.
+- For large single-scope corpora, use `--stage-digest-as-mass-ingest` to defer digest until you can supervise the bulk operation.
 
-## Rolling back
+## Cutover (when you've validated V2 and are ready to retire V1)
 
-If migration fails or you want to revert:
+Once V2 is working as expected and you no longer need V1:
 
 ```bash
-mv ~/.aletheia/data/aletheia.db.bak.aletheia-v1-pre-migration ~/.aletheia/data/aletheia.db
-rm -rf ~/.aletheia/scopes ~/.aletheia/scope_registry.db
-npm install -g aletheia@^0.2.8     # Reinstall V1
+# 1. Remove V1's MCP server entry from ~/.claude/settings.json (the "aletheia" entry).
+#    Leave the "aletheia-v2" entry in place.
+# 2. Stop V1 sessions if any remain
+# 3. Uninstall V1
+npm uninstall -g aletheia
+# 4. Optionally remove V1's data dir
+rm -rf ~/.aletheia/
 ```
 
-V1 data is preserved by the migration via rename; rollback restores it without data loss.
+V2 continues to operate normally. V1 is gone.
+
+## Rolling back (if V2 doesn't work for you)
+
+If V2 has issues and you want to revert to V1-only:
+
+```bash
+# 1. Remove V2's MCP server entry from ~/.claude/settings.json
+# 2. Uninstall V2
+npm uninstall -g aletheia-v2
+# 3. Optionally remove V2's data dir (V2 was never the source of truth; safe to delete)
+rm -rf ~/.aletheia-v2/
+```
+
+V1 is untouched and continues to operate normally with all its original data.
 
 ## Schema differences (FYI)
 
@@ -6235,9 +7091,9 @@ Search and read tools work transparently across both V1-migrated and V2-native e
 - Replacing `rusqlite` bundled SQLite with system SQLite (smaller binary; introduces system dep — bad for npm distribution)
 - UPX compression (controversial; may trigger antivirus false positives)
 
-**On the platform package convention:** cargo-dist generates packages named `<bin-name>-<rust-target>` (e.g., `aletheia-x86_64-unknown-linux-gnu`). The wrapper's `optionalDependencies` references these by exact name. Ensure version sync between wrapper and platform packages on every release (cargo-dist handles this).
+**On the platform package convention:** cargo-dist generates packages named `<bin-name>-<rust-target>` (e.g., `aletheia-v2-x86_64-unknown-linux-gnu`). The wrapper's `optionalDependencies` references these by exact name. Ensure version sync between wrapper and platform packages on every release (cargo-dist handles this).
 
-**On `npm install -g` semantics:** With `optionalDependencies`, npm installs ONLY the matching platform package (others fail their `os`/`cpu` filter, but failure is silent and ignored — that's the intended behavior). The wrapper's `bin` field provides the global `aletheia` command.
+**On `npm install -g` semantics:** With `optionalDependencies`, npm installs ONLY the matching platform package (others fail their `os`/`cpu` filter, but failure is silent and ignored — that's the intended behavior). The wrapper's `bin` field provides the global `aletheia-v2` command.
 
 **On Anthropic-vs-personal scope:** If publishing under `@aletheia/cli` instead of bare `aletheia`, update `package.json::name` and the wrapper's `optionalDependencies` keys. The bare `aletheia` name is taken — recommend `@yourorg/aletheia` or another bare name. Reserve at npm before release.
 </guidance>
@@ -6245,27 +7101,27 @@ Search and read tools work transparently across both V1-migrated and V2-native e
 ### Integration Points
 - **All previous phases:** Phase 10 packages the work of Phases 1-9. No code changes to those phases (their integration was completed in their own conductor reviews).
 - **CI ↔ release:** Phase 1's CI workflow (`ci.yml`) runs on every PR; Phase 10's release workflow (`release.yml`) runs on tag push. They don't share code but share the workspace structure.
-- **Documentation ↔ user-visible flows:** `docs/INSTALL.md` and `docs/MIGRATION-FROM-V1.md` reference Phase 3's `aletheia setup`, Phase 8's `aletheia migrate-from-v1`. Verify command line examples match actual CLI signatures.
+- **Documentation ↔ user-visible flows:** `docs/INSTALL.md` and `docs/MIGRATION-FROM-V1.md` reference Phase 3's `aletheia-v2 setup`, Phase 8's `aletheia-v2 migrate-from-v1`. Verify command line examples match actual CLI signatures.
 
 ### Expected Outcomes
 - `cargo dist plan` succeeds locally
 - Push a test tag (e.g., `v2.0.0-rc1`) triggers `release.yml`; all 5 platform builds succeed; npm packages publish; GitHub release created with binaries attached
-- `npm install -g aletheia@2.0.0-rc1` works on each supported platform; `aletheia --version` returns 2.0.0-rc1
-- `aletheia setup` creates `~/.aletheia/` structure end-to-end
-- `aletheia migrate-from-v1 <v1.db> --confirm-backup-taken` completes successfully against a real V1 DB
-- Claude Code session sees `aletheia` MCP server; `tools/list` returns 30+ tools; `whoami` works post-claim
-- JS wrapper signal forwarding: spawn `aletheia serve`, send SIGTERM to the npm process — Rust binary receives SIGTERM and shuts down gracefully (lock row deleted, audit log entry written)
-- JS wrapper exit-code propagation: `aletheia migrate-from-v1` failure (e.g., bad path) returns non-zero exit code visible to npm
+- `npm install -g aletheia-v2@2.0.0-rc1` works on each supported platform; `aletheia-v2 --version` returns 2.0.0-rc1
+- `aletheia-v2 setup` creates `~/.aletheia-v2/` structure end-to-end
+- `aletheia-v2 migrate-from-v1 <v1.db> --confirm-backup-taken` completes successfully against a real V1 DB
+- Claude Code session sees `aletheia-v2` MCP server; `tools/list` returns 30+ tools; `whoami` works post-claim
+- JS wrapper signal forwarding: spawn `aletheia-v2 serve`, send SIGTERM to the npm process — Rust binary receives SIGTERM and shuts down gracefully (lock row deleted, audit log entry written)
+- JS wrapper exit-code propagation: `aletheia-v2 migrate-from-v1` failure (e.g., bad path) returns non-zero exit code visible to npm
 - Binary size on linux-x64: under 20MB stripped (target: 15MB)
-- First-install via `npm install -g aletheia` completes in under 30s on a typical broadband connection (target: 15s)
+- First-install via `npm install -g aletheia-v2` completes in under 30s on a typical broadband connection (target: 15s)
 
 ### Testing Recommendations
 - Local cargo-dist test: `cargo dist build --installer=npm --output-dir=./dist-test` produces the wrapper + platform packages
 - Unit test the JS wrapper: mock `child_process.spawn`; verify signal forwarding wires up; verify exit code propagation
-- Cross-platform CI smoke test: matrix across Linux/macOS/Windows; install the just-built npm package; run `aletheia --version`
+- Cross-platform CI smoke test: matrix across Linux/macOS/Windows; install the just-built npm package; run `aletheia-v2 --version`
 - Migration smoke test in CI: generate synthetic V1 DB; run migrate-from-v1; verify exit 0 and migration report
-- MCP integration smoke test in CI: spawn `aletheia serve`; connect with rmcp client; tools/list returns expected count
-- Documentation accuracy test: parse `docs/INSTALL.md` for command examples; verify each command's signature matches Phase 3's `aletheia setup` and Phase 8's `aletheia migrate-from-v1`
+- MCP integration smoke test in CI: spawn `aletheia-v2 serve`; connect with rmcp client; tools/list returns expected count
+- Documentation accuracy test: parse `docs/INSTALL.md` for command examples; verify each command's signature matches Phase 3's `aletheia-v2 setup` and Phase 8's `aletheia-v2 migrate-from-v1`
 </core>
 </section>
 <!-- /phase:10 -->
@@ -6279,26 +7135,26 @@ Search and read tools work transparently across both V1-migrated and V2-native e
 
 <mandatory>All checklist items must be verified before declaring V2 release-ready.</mandatory>
 
-- [ ] **JS wrapper uses `stdio: 'inherit'`** — verified by reading `packages/aletheia/index.js` (no `console.log` ever; `console.error` only)
+- [ ] **JS wrapper uses `stdio: 'inherit'`** — verified by reading `packages/aletheia-v2/index.js` (no `console.log` ever; `console.error` only)
 - [ ] **JS wrapper traps and forwards SIGINT/SIGTERM/SIGHUP/SIGQUIT** — verified by reading the signals loop in `index.js`
 - [ ] **cargo-dist uses `optionalDependencies` pattern, NOT `postinstall`** — verified in `dist-workspace.toml` or workspace cargo metadata
-- [ ] **Binaries are `strip`-ed** — `target/<target>/dist/aletheia` size matches stripped expectations (~15MB on linux-x64; ~12MB on darwin-arm64)
+- [ ] **Binaries are `strip`-ed** — `target/<target>/dist/aletheia-v2` size matches stripped expectations (~15MB on linux-x64; ~12MB on darwin-arm64)
 - [ ] All 5 platform targets build successfully in CI
 - [ ] All 5 platform-specific npm packages publish successfully on tag push
-- [ ] Wrapper package `aletheia@2.0.0` publishes successfully with correct `optionalDependencies` references
-- [ ] `npm install -g aletheia` works on each platform; `aletheia --version` returns expected version
-- [ ] `aletheia setup` creates `~/.aletheia/` structure correctly + registers hooks in `~/.claude/settings.json`
-- [ ] `aletheia migrate-from-v1` works against real V1 DB (E2E CI test with synthetic V1 data)
-- [ ] Claude Code session can connect to `aletheia` MCP server and call tools (E2E CI test)
+- [ ] Wrapper package `aletheia-v2@2.0.0` publishes successfully with correct `optionalDependencies` references
+- [ ] `npm install -g aletheia-v2` works on each platform; `aletheia-v2 --version` returns expected version
+- [ ] `aletheia-v2 setup` creates `~/.aletheia-v2/` structure correctly + registers hooks in `~/.claude/settings.json`
+- [ ] `aletheia-v2 migrate-from-v1` works against real V1 DB (E2E CI test with synthetic V1 data)
+- [ ] Claude Code session can connect to `aletheia-v2` MCP server and call tools (E2E CI test)
 - [ ] JS wrapper signal forwarding test passes: spawn → SIGTERM to node → Rust binary shuts down + lock row deleted
-- [ ] JS wrapper exit-code propagation test passes: `aletheia migrate-from-v1 /nonexistent` returns non-zero exit
+- [ ] JS wrapper exit-code propagation test passes: `aletheia-v2 migrate-from-v1 /nonexistent` returns non-zero exit
 - [ ] Documentation matches actual CLI: every command in `docs/INSTALL.md` and `docs/MIGRATION-FROM-V1.md` is callable
 - [ ] GitHub release created with binaries attached (sanity check: download a binary, run `--version`, expected output)
 - [ ] V2 final-release tag (`v2.0.0`) successfully publishes the full package
-- [ ] **POST-RELEASE final integration test:** Install V2 via `npm install -g aletheia` from public npm; run `aletheia setup`; run a real Claude Code session; perform claim → write_memory → read flow; verify success.
+- [ ] **POST-RELEASE final integration test:** Install V2 via `npm install -g aletheia-v2` from public npm; run `aletheia-v2 setup`; run a real Claude Code session; perform claim → write_memory → read flow; verify success.
 
 ### Known Risks
-- **First-install MCP timeout:** Slow connections may exceed CC's 30s MCP init timeout on first `npx aletheia` invocation. Mitigated by: small stripped binaries, `npm install -g` (vs `npx`-style auto-install) for the recommended flow, troubleshooting note in INSTALL.md.
+- **First-install MCP timeout:** Slow connections may exceed CC's 30s MCP init timeout on first `npx aletheia-v2` invocation. Mitigated by: small stripped binaries, `npm install -g` (vs `npx`-style auto-install) for the recommended flow, troubleshooting note in INSTALL.md.
 - **Code signing absence:** macOS Gatekeeper + Windows SmartScreen warnings on first launch. Users override via documented steps. Add code signing in V2.0.x if user reports surface (low priority for V2.0.0).
 - **`aletheia` package name availability:** If the bare name is taken on npm, fall back to `@yourorg/aletheia`. Update wrapper + dist config + docs accordingly.
 - **GitHub Actions billing:** Multi-target matrix uses ~5 runner-minutes per release. Free tier covers ~2000 minutes/month — plenty for V2's release cadence. Monitor.
@@ -6307,13 +7163,13 @@ Search and read tools work transparently across both V1-migrated and V2-native e
 - **Mac arm64 vs x64 native runners:** GitHub provides both now (macos-13 = x64, macos-14 = arm64). Do NOT cross-compile darwin-arm64 from x64 — use the native runner.
 - **Linux arm64 native runners:** Free tier added them in 2025. If still on `cross`, monitor for native runner availability and migrate (faster + simpler).
 - **JS wrapper Node.js version:** `node:child_process` and `node:os` modules work in Node 18+. The `engines.node = ">=18.0.0"` in package.json enforces this. If users on older Node fail to install, npm displays a clear error.
-- **Self-update:** No self-updater in V2.0.0. Users update via `npm install -g aletheia@latest`. Document.
+- **Self-update:** No self-updater in V2.0.0. Users update via `npm install -g aletheia-v2@latest`. Document.
 
 ### Final Project Verification (post-release)
 
 <mandatory>The following end-to-end verification must pass before declaring V2 production-ready:</mandatory>
 
-- [ ] **End-to-end install test on each platform:** Fresh VM, `npm install -g aletheia`, `aletheia setup`, start Claude Code, verify MCP connection, perform claim/write_memory/read flow.
+- [ ] **End-to-end install test on each platform:** Fresh VM, `npm install -g aletheia-v2`, `aletheia-v2 setup`, start Claude Code, verify MCP connection, perform claim/write_memory/read flow.
 - [ ] **End-to-end V1 migration test:** Real-world V1 user upgrades to V2 via documented migration steps; data integrity preserved; first claim triggers digest pass within expected time.
 - [ ] **Concurrent multi-session test:** 5 simultaneous Claude Code sessions (CEO + 2 PMs + 2 TLs); each claims its own scope; writes don't interfere; reads see correct cross-scope visibility per claim's PermissionSet.
 - [ ] **Lock conflict test:** Two `claude --resume <same-id>` from different terminals; second receives FATAL refusal; first continues working.

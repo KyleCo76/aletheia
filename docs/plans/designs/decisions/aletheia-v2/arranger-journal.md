@@ -707,3 +707,65 @@ The Arranger's work is done. Plan is locked. Conductor pipeline takes over.
 2. Invoke Conductor with: `/conductor docs/plans/designs/aletheia-v2-plan.md` (or whatever the Conductor invocation pattern is in Kyle's setup)
 3. Per the V3 forward-look in `arranger-handoff.md`: V3 Dramaturg session runs AFTER V2 is implemented and deployed.
 
+---
+
+## Phase 6 Re-Open: Post-CEO-Pre-Build-Review Plan Corrections
+
+**Date:** 2026-04-26 (same day as initial finalization)
+**Trigger:** CEO + Gemini + journal-recon teammate produced `decisions/aletheia-v2/ceo-prebuild-review-points.md` flagging substantive issues with the locked plan: (a) V2's npm-package-overwrites-V1 model is unsafe for rollback + incompatible with side-by-side validation workflow, (b) Phase 8 ships with 10 acknowledged TODOs that should be closed before implementation begins, (c) master-key flow is unspecified across `setup` + `migrate-from-v1`, (d) ATTACH 10-DB ceiling deserves explicit handling, (e) several retroactive amendments scattered across phases need consolidation, (f) Shadow Mode dead-code framing + Phase 9 reconciler stubs need attention.
+
+**Kyle's scope decision:** approved all CEO recommendations; in-place amendment of original phases (NOT a separate Phase 0 doc); walkthrough doc + plan corrections committed together (one review cycle); pm-aletheia scope name preserved across migration (PM session name `pm-aletheia-v2` is orthogonal to scope naming).
+
+### Corrections folded into the plan
+
+**Strength:** mandatory.
+
+| Item | Resolution |
+|---|---|
+| **Side-by-side install** (CEO Comment 2) | Overview "Install model" section added; npm package + binary + data dir all renamed to `aletheia-v2`; migration tool no longer renames V1 DB; cutover documented in MIGRATION-FROM-V1.md |
+| **Master-key flow Option 1** (CEO Part 2.B) | Phase 8 mandatory + keys::transform: V2 setup mints fresh master; migration imports V1 keys with is_master_key=0; V1 master becomes maintenance-permission V2 sub-key |
+| **A1 — Memory version numbering** | Two-pass algorithm specified: count history → INSERT versions 1..N → INSERT current at N+1 |
+| **A2 — `fetch_v1_tags_for_entry`** | Concrete SQL JOIN added |
+| **A3 — provenance translation pass** | New `crate::migrate::provenance::translate_all` module specified; runs after all per-scope transforms; uses id_mapping populated by journal + memory transforms |
+| **A4 — `count_handoffs_per_scope`** | Implemented via JOIN through V1 `keys.entry_scope` (no longer hardcoded 0) |
+| **A5 — Post-migration validation** | New `crate::migrate::validation::verify_row_counts` module; asserts V2 sums match V1 sums per entry_class |
+| **A6 — Active V1 session detection** | `scan_active_v1_sessions` mandatory; refuses with `V1_SESSIONS_ACTIVE` error unless `--ignore-active-sessions` |
+| **A7 — Dry-run report schema** | Full `MigrationReport` struct with `ScopePlanReport` + `KeyPlanReport` + `RowsByClass`; deterministic scope_uuid (SHA-256 of namespace) so dry-run + actual match; written to both JSON + markdown at `~/.aletheia-v2/dry-run-reports/` |
+| **A8 — V1 schema version constraint** | Mandatory: refuse V1 schema_version < 4 with clear error; future contributor task documented for v3 fallback |
+| **A9 — Failure cleanup includes key files** | `created_key_files: Vec<PathBuf>` populated by keys::transform; on failure, both scope DBs AND key files deleted |
+| **A10 — `is_applying` state machine** | Differentiated: full cleanup → flip to false; partial state → safe-hold true |
+| **B (master-key flow)** | See above — Option 1 locked |
+| **C (ATTACH 10-DB ceiling)** | Phase 1 build.rs + `[workspace.dependencies]` note: SQLITE_MAX_ATTACHED=125 build flag |
+| **D (Phase 0 consolidation)** | Replaced with **in-place amendment** of original phases — see "In-place amendments" section below |
+| **E (Shadow Mode framing)** | Validation-mode default disabled (Option 1 from CEO); plan documentation already aligned |
+| **F (Phase 9 reconciler stubs)** | `check_source_tombstoned`, `check_target_inserted`, `tombstone_source`, `insert_target` all closed with concrete implementations |
+| **Open Q1 — manual stop sessions** | Resolved by A6 active session detection + override flag |
+| **Open Q2 — `--stage-digest-as-mass-ingest` criteria** | Documented: use when single scope >500 V1 entries OR estimated digest >200k tokens |
+| **Open Q3 — CC settings.json co-existence** | Resolved: V2 hooks at `~/.aletheia-v2/hooks/` registered as separate entries; V1 hooks at original paths stay as-is |
+| **Open Q4 — Cutover ceremony** | Documented in MIGRATION-FROM-V1.md cutover section |
+| **Open Q5 — PM scope naming** | `pm-aletheia-v2` is the build PM SESSION name (orthogonal to scope); CEO V1's `pm-aletheia` scope migrates with name preserved (new scope_uuid in V2's partition; same logical name) |
+
+### In-place amendments (replaces CEO Part 2.D Phase 0 consolidation)
+
+Rather than create a separate "Phase 0 Final State Reference" document, the original phase sections were amended in-place so a Conductor reading Phase N sees the FINAL spec without cross-referencing:
+
+- **Phase 1**: Cargo workspace's binary name updated to `aletheia-v2`; SQLITE_MAX_ATTACHED=125 build.rs note added
+- **Phase 2**: `SESSION_LOCKS_TABLE` constant now includes 6 active_project/context columns + active_feature_id; `ENTRIES_FTS_TABLE` constant added with sync triggers; `install_all` helper functions added on both `scope_schema` and `registry_schema` modules
+- **Phase 5**: `AuthContext::precheck` includes `deprecation::check_and_log` call from the start (no longer a "retroactive amendment"); `active_context_tools` simplified note removed (Phase 2 has the columns)
+- **Phase 6**: `ScoringEngine.top_k_filtered` signature includes `Option<&ShadowObserver>` + `Option<ObservationMetadata>` parameters from the start; observation deferred via `tokio::spawn` to avoid blocking
+- **Phase 8**: Substantive rework per CEO items A1-A10 + side-by-side install + master-key flow Option 1 (orchestrator + keys::transform + provenance + validation modules)
+- **Phase 9**: ShadowObserver renamed to `observe_sync` matching Phase 6 signature; reconciler stubs closed; `write_comparison` accepts `ranker_name` parameter
+- **Phase 10**: Package + binary + path renamed to `aletheia-v2`; INSTALL.md and MIGRATION-FROM-V1.md content rewritten for side-by-side install model + cutover ceremony
+
+All "Phase N retroactive amendment" callouts in conductor reviews replaced with past-tense verification items confirming the amended state.
+
+### New artifact: migration-walkthrough.md
+
+Per CEO Comment 2c, a pre-build deliverable using CEO's actual V1 data (22 entries, 217 journal_entries, 89 memory_entries across 5 scopes) traces the migration through all classes (journal, memory with 6-key container demonstrating Q5A, status with sections, handoff, provenance with 3 rows, keys with V1 master + 8 sub-keys). Lives at `decisions/aletheia-v2/migration-walkthrough.md`. The 5 acceptance criteria at the end define what "Phase 8 is implementation-validated" looks like.
+
+### Re-verification + commit
+
+After plan corrections complete: re-run verification subagent against the corrected plan; regenerate plan-index (line numbers shifted significantly — the plan grew from ~6340 to ~7000+ lines); commit corrections + walkthrough + handoff update + this journal entry as one logical revision.
+
+**Verified-timestamp** in plan-index will reflect the post-correction verification, NOT the initial 2026-04-26T07:50:17 timestamp.
+

@@ -112,6 +112,32 @@ Per official SQLite docs (verified): in WAL mode, transactions across ATTACHed d
 
 **Do NOT design KG to assume cross-DB atomicity.** Design around it.
 
+### Side-by-side install model (V2 ships as `aletheia-v2`, V1 untouched)
+
+**Origin:** CEO pre-build review (2026-04-26) — original plan had V2 OVERWRITING V1's npm package name (`aletheia@2.0.0` replacing V1's `aletheia@0.2.8`). CEO flagged this as unsafe for rollback + incompatible with the validate-before-cutover workflow.
+
+**V2 commitment (post-CEO-review):**
+- npm package: `aletheia-v2` (distinct from V1's `aletheia`)
+- Binary name: `aletheia-v2` (CLI command)
+- Data dir: `~/.aletheia-v2/` (parallel to V1's `~/.aletheia/`)
+- Both V1 and V2 install + run simultaneously. CC's `~/.claude/settings.json` registers them as separate MCP servers (`aletheia` and `aletheia-v2`) with separate hook entries.
+- Migration tool reads V1 read-only at `~/.aletheia/data/aletheia.db`, writes V2 to `~/.aletheia-v2/`. **V1 is NEVER renamed/modified by migration.** No `.bak` rename — that was the old single-install model; removed.
+- Cutover (uninstall V1 npm + remove V1 from CC settings + optional `rm -rf ~/.aletheia/`) is user-driven AFTER V2 validation. Documented in `docs/MIGRATION-FROM-V1.md`.
+
+**Master-key flow Option 1 (locked):**
+- `aletheia-v2 setup` mints a fresh V2 master key (independent of V1's master). Stored at `~/.aletheia-v2/keys/master.key`, V2 `keys` table row with `is_master_key=1`.
+- `aletheia-v2 migrate-from-v1` imports V1 keys into V2's `keys` table preserving `key_id` + permissions but with `is_master_key=0`. V1's master key (V1's only `permissions=maintenance AND entry_scope IS NULL` row) becomes a 'maintenance'-permission V2 sub-key (still maintenance level — can do everything — but the V2 master is the trust root for new operations).
+
+**V1 schema version constraint (locked):**
+- V2 supports migration from V1 schema_version >= 4 only. Lower versions refused with explicit error. Future contributor task: add fallback for v3 with default values for missing columns (`revoked`, `name`).
+
+**Active V1 session detection (locked):**
+- Migration scans `~/.aletheia/sockets/aletheia-*.sock` for live PIDs (via `kill(pid, 0)`); refuses with `V1_SESSIONS_ACTIVE` error if any are alive UNLESS `--ignore-active-sessions` flag set.
+
+**For V3 KG layer:**
+- Same install model continues — V3 publishes as `aletheia-v3` if/when it's a separate npm package, or as a subsequent version of `aletheia-v2` if it's an additive DDL upgrade. Per the V2 Migration Framework (`start_migration`), V2 → V3 is a generic DDL migration, not a side-by-side install — V3 ships as `aletheia-v2@3.0.0` upgrade with `start_migration` running on the existing `~/.aletheia-v2/` data dir.
+- The side-by-side pattern is for V1→V2 (different package names because the binaries are different greenfield rewrites). V2.x → V2.y+1 and V2 → V3 are in-place upgrades.
+
 ### Visible-failure principle (V2-new; eliminates V1 silent-failure class)
 
 **Origin:** Late finding from CEO session 2026-04-26 — V1's `write_journal`/`write_memory` accepted an `entry_id` parameter and FK-failed silently on some values. Sessions summarized failed writes as if successful, leading to "claimed-but-non-existent" entries that were never persisted.
