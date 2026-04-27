@@ -1,0 +1,33 @@
+[package]
+name = "aletheia-v2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Aletheia V2 — structured memory MCP server (Rust rewrite)"
+
+[lib]
+name = "aletheia_v2"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aletheia-v2"
+path = "src/main.rs"
+
+[dependencies]
+rmcp = { workspace = true }
+rusqlite = { workspace = true }
+interprocess = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+toml = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+hostname = { workspace = true }
+clap = { workspace = true }

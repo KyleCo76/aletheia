@@ -1,0 +1,3 @@
+# Clippy configuration for aletheia-v2.
+# Standard lints; phase-1 keeps this minimal — opting out of pedantic-tier
+# strictness can be added in later phases if specific lints prove noisy.

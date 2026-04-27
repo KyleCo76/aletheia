@@ -10,6 +10,15 @@ dist/
 .remember/
 pm-status.json
 activity-log/
+.mcp.json
+# Cover all *-handoff/ coordination dirs under aletheia-v2/ (PM, TL, and
+# any future variants spawned by downstream coordination). The trailing
+# slash limits the match to directories.
+aletheia-v2/.*-handoff/
+
+# Rust build artifacts
+target/
+**/target/
 
 # Internal planning and review docs (not for public repo)
 aletheia-code-review.md
