@@ -2,6 +2,46 @@
 
 All notable changes to Aletheia are documented in this file.
 
+## v0.2.9 — 2026-05-10
+
+Circuit-breaker ergonomics release. Loosens the default
+general-write throttle so PM-tier bulk ingest workflows (the
+PM-Lethe ~800k-conversation subset promotion class) don't slam
+into the limit on bootstrap, and adds a per-call, permission-gated
+opt-out for the rare cases where bulk legitimately exceeds the
+loosened default.
+
+### Changed
+
+- **Default `circuitBreakerWritesPerInterval` raised from 20 → 100.**
+  Interval unchanged (5 minutes). The previous 20/5min default was
+  set conservatively for single-shot interactive sessions; PM-tier
+  sessions doing bulk memory ingest blast through it on bootstrap.
+  100/5min gives bulk operations room in a single window without
+  bypass while still tripping on runaway loops (a stuck loop will
+  cross 100 in seconds, not minutes). Operators can still tune via
+  `[limits]` in `settings.toml`.
+
+### Added
+
+- **Per-call `bypass_circuit_breaker` boolean on `write_journal`,
+  `write_memory`, and `replace_status`.** Optional, default
+  `false`. When `true` AND the caller's claim has permissions in
+  `{ create-sub-entries, maintenance }`, the general circuit
+  breaker check is skipped for that single call. Lower permission
+  levels (`read-only`, `read-write`) silently ignore the flag — no
+  error, no warning, just normal throttle. Bypass is per-call (not
+  session-level) so every escape is auditable in the call log.
+  `recordWrite` still fires on a bypass write, so a session that
+  bypasses 100 times then attempts a non-bypass write will still
+  trip on the 101st.
+
+### Test infrastructure
+
+- Five new cases in `test/circuit-breaker-bulk-bypass.test.mjs`
+  covering the raised default (1), the permission gate (4: both
+  trusted permission tiers honored, both lower tiers ignored).
+
 ## v0.2.8 — 2026-04-12
 
 Hermes alignment release. Three changes enabling the Hermes

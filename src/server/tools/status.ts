@@ -11,7 +11,7 @@ import {
 } from '../../db/queries/status.js';
 import { xmlEscape, validateContentSize } from '../../lib/errors.js';
 import { toolError } from './response-format.js';
-import { checkGeneralCircuitBreaker, recordWrite } from '../../lib/circuit-breaker.js';
+import { checkGeneralCircuitBreaker, recordWrite, resolveBypass } from '../../lib/circuit-breaker.js';
 
 export function registerStatusTools(
   handlers: Record<string, ToolHandler>,
@@ -52,8 +52,13 @@ export function registerStatusTools(
     const authErr = claimGuard(db, sessionState, settings);
     if (authErr) return authErr;
 
+    // v0.2.9: per-call bypass for PM-tier bulk ingest workflows.
+    // Only honored when the claim has trusted permissions; silently
+    // ignored otherwise (read-only / read-write get normal throttle).
+    const bypass = resolveBypass(sessionState, args.bypass_circuit_breaker as boolean | undefined);
+
     // General circuit breaker check
-    const cbCheck = checkGeneralCircuitBreaker(sessionState, settings);
+    const cbCheck = checkGeneralCircuitBreaker(sessionState, settings, bypass);
     if (cbCheck.blocked) return cbCheck.response;
 
     const entryId = args.entry_id as string | undefined;

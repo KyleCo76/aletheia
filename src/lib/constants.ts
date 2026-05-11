@@ -19,7 +19,7 @@ export const DEFAULTS = {
   digestTimeThresholdHours: 4,
   hookTimeoutSeconds: 2,
   showRelatedDefaultThreshold: 1,
-  circuitBreakerWritesPerInterval: 20,
+  circuitBreakerWritesPerInterval: 100,
   circuitBreakerIntervalMinutes: 5,
   criticalWriteCap: 3,
   adaptiveNoChangeBumpMultiplier: 2,

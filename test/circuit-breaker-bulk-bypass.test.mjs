@@ -269,3 +269,194 @@ test('promote_to_memory IS now subject to the circuit breaker', () => {
   assert.equal(blocked.isError, true);
   assert.match(blocked.content[0].text, /CIRCUIT_BREAKER/);
 });
+
+// ---------- v0.2.9: default raised 20 → 100 + per-call bypass with
+//                    permission gate.
+//
+// Bulk memory ingest workflows (PM-Lethe class ~800k-conversation
+// subset promotion) blast through the old 20/5min default on
+// bootstrap. The new default is 100/5min; runaway loops still trip.
+// For workloads that legitimately exceed 100, a per-call
+// `bypass_circuit_breaker: true` flag opts out — but only when the
+// claimed key has create-sub-entries or maintenance permissions.
+// Lower tiers (read-only, read-write) silently ignore the flag.
+
+import { DEFAULTS } from '../dist/lib/constants.js';
+
+test('default circuitBreakerWritesPerInterval is 100 (v0.2.9 loosened from 20)', () => {
+  assert.equal(
+    DEFAULTS.circuitBreakerWritesPerInterval,
+    100,
+    'v0.2.9 raised the default to 100/5min for PM-tier bulk ingest',
+  );
+  assert.equal(
+    DEFAULTS.circuitBreakerIntervalMinutes,
+    5,
+    'interval unchanged',
+  );
+});
+
+function makeHandlersWithClaim(db, permissions, writeLimit = 3) {
+  // Variant of makeHandlers that pre-populates sessionState with a
+  // claimed key at the requested permission level. enforce stays
+  // false so claimGuard remains a no-op — we're testing the bypass
+  // permission gate, which keys off sessionState.claimedKey
+  // independently of enforce-mode.
+  const handlers = {};
+  const sessionState = new Map();
+  const settings = {
+    permissions: { enforce: false },
+    digest: { criticalWriteCap: 3 },
+    limits: {
+      circuitBreakerWritesPerInterval: writeLimit,
+      circuitBreakerIntervalMinutes: 5,
+      criticalWriteCap: 3,
+    },
+  };
+  registerJournalTools(handlers, db, settings, sessionState);
+  registerMemoryTools(handlers, db, settings, sessionState);
+  registerEntryTools(handlers, db, settings, sessionState);
+  registerStatusTools(handlers, db, settings, sessionState);
+  registerHandoffTools(handlers, db, settings, sessionState);
+  sessionState.set('projectNamespace', 'test-proj');
+  sessionState.set('claimedKey', {
+    id: 'test-key-id',
+    permissions,
+    entryScope: null,
+  });
+  return { handlers, sessionState };
+}
+
+test('write_journal: bypass_circuit_breaker honored for maintenance claims', () => {
+  const db = setupDb();
+  const { handlers } = makeHandlersWithClaim(db, 'maintenance', 2);
+  const entryId = seedEntry(db, 'journal');
+
+  // Burn through the (small) limit
+  for (let i = 0; i < 2; i++) {
+    const r = handlers['write_journal']({ entry_id: entryId, content: `n${i}` });
+    assert.notEqual(r.isError, true, `call ${i} should succeed`);
+  }
+
+  // Without bypass, next call trips
+  const blocked = handlers['write_journal']({ entry_id: entryId, content: 'over' });
+  assert.equal(blocked.isError, true);
+  assert.match(blocked.content[0].text, /CIRCUIT_BREAKER/);
+
+  // With bypass, the same call goes through
+  const allowed = handlers['write_journal']({
+    entry_id: entryId,
+    content: 'bypass me',
+    bypass_circuit_breaker: true,
+  });
+  assert.notEqual(allowed.isError, true, 'bypass must skip the breaker for maintenance');
+});
+
+test('write_memory: bypass_circuit_breaker honored for create-sub-entries claims', () => {
+  const db = setupDb();
+  const { handlers } = makeHandlersWithClaim(db, 'create-sub-entries', 2);
+  const entryId = seedEntry(db, 'memory');
+
+  for (let i = 0; i < 2; i++) {
+    const r = handlers['write_memory']({
+      entry_id: entryId, key: `k${i}`, value: `v${i}`,
+    });
+    assert.notEqual(r.isError, true);
+  }
+
+  const blocked = handlers['write_memory']({
+    entry_id: entryId, key: 'over', value: 'over',
+  });
+  assert.equal(blocked.isError, true);
+  assert.match(blocked.content[0].text, /CIRCUIT_BREAKER/);
+
+  const allowed = handlers['write_memory']({
+    entry_id: entryId,
+    key: 'bypass',
+    value: 'me',
+    bypass_circuit_breaker: true,
+  });
+  assert.notEqual(allowed.isError, true, 'bypass must skip the breaker for create-sub-entries');
+});
+
+test('replace_status: bypass_circuit_breaker silently ignored for read-write claims', () => {
+  const db = setupDb();
+  const { handlers } = makeHandlersWithClaim(db, 'read-write', 2);
+
+  // No pre-seeded status_doc — replace_status creates one on first
+  // call (versionId is ignored when the doc doesn't exist), and we
+  // chain subsequent version_id values from each result's XML.
+  const entryId = seedEntry(db, 'status');
+
+  function extractVersionId(result) {
+    const m = result.content[0].text.match(/version_id="([^"]+)"/);
+    return m ? m[1] : '';
+  }
+
+  // Burn through limit with replace_status itself.
+  let versionId = '';
+  for (let i = 0; i < 2; i++) {
+    const r = handlers['replace_status']({
+      entry_id: entryId, content: `c${i}`, version_id: versionId,
+    });
+    assert.notEqual(r.isError, true, `call ${i} should succeed`);
+    versionId = extractVersionId(r);
+  }
+
+  // Asking for bypass at read-write level must NOT succeed —
+  // the flag is silently ignored, throttle proceeds.
+  const blocked = handlers['replace_status']({
+    entry_id: entryId,
+    content: 'over',
+    version_id: versionId,
+    bypass_circuit_breaker: true,
+  });
+  assert.equal(blocked.isError, true, 'read-write must not be able to bypass');
+  assert.match(blocked.content[0].text, /CIRCUIT_BREAKER/);
+});
+
+test('write_journal: bypass_circuit_breaker silently ignored for read-only claims', () => {
+  const db = setupDb();
+  const { handlers } = makeHandlersWithClaim(db, 'read-only', 1);
+  const entryId = seedEntry(db, 'journal');
+
+  // One successful write to exhaust the (tiny) limit.
+  const r1 = handlers['write_journal']({ entry_id: entryId, content: 'first' });
+  assert.notEqual(r1.isError, true);
+
+  // Bypass attempt at read-only must still get throttled.
+  const blocked = handlers['write_journal']({
+    entry_id: entryId,
+    content: 'sneaky',
+    bypass_circuit_breaker: true,
+  });
+  assert.equal(blocked.isError, true, 'read-only must not be able to bypass');
+  assert.match(blocked.content[0].text, /CIRCUIT_BREAKER/);
+});
+
+test('bypass_circuit_breaker: omitted / false behaves identically (no implicit bypass)', () => {
+  const db = setupDb();
+  const { handlers } = makeHandlersWithClaim(db, 'maintenance', 2);
+  const entryId = seedEntry(db, 'journal');
+
+  for (let i = 0; i < 2; i++) {
+    const r = handlers['write_journal']({ entry_id: entryId, content: `n${i}` });
+    assert.notEqual(r.isError, true);
+  }
+
+  // Explicitly false — should still trip.
+  const blockedFalse = handlers['write_journal']({
+    entry_id: entryId,
+    content: 'no bypass',
+    bypass_circuit_breaker: false,
+  });
+  assert.equal(blockedFalse.isError, true);
+  assert.match(blockedFalse.content[0].text, /CIRCUIT_BREAKER/);
+
+  // Omitted — should also trip (same behavior as false).
+  const blockedOmit = handlers['write_journal']({
+    entry_id: entryId,
+    content: 'no bypass',
+  });
+  assert.equal(blockedOmit.isError, true);
+});

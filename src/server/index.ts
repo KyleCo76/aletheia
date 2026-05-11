@@ -106,7 +106,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'write_journal',
-    description: 'Write a journal entry. Use critical:true for urgent knowledge (requires memory_summary).',
+    description: 'Write a journal entry. Use critical:true for urgent knowledge (requires memory_summary). bypass_circuit_breaker: opt-out of the general write throttle for this call; honored only for create-sub-entries / maintenance claims, silently ignored otherwise.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -114,19 +114,21 @@ const TOOL_DEFINITIONS = [
         tags: { type: 'array', items: { type: 'string' } },
         critical: { type: 'boolean' }, memory_summary: { type: 'string' },
         skip_related: { type: 'boolean' },
+        bypass_circuit_breaker: { type: 'boolean' },
       },
       required: ['entry_id', 'content'],
     },
   },
   {
     name: 'write_memory',
-    description: 'Write a memory entry (key-value). OCC versioning active only when permissions are enforced; in single-agent mode version_id is ignored.',
+    description: 'Write a memory entry (key-value). OCC versioning active only when permissions are enforced; in single-agent mode version_id is ignored. bypass_circuit_breaker: opt-out of the general write throttle for this call; honored only for create-sub-entries / maintenance claims, silently ignored otherwise.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         entry_id: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
         tags: { type: 'array', items: { type: 'string' } },
         version_id: { type: 'string' }, supersedes: { type: 'string' },
+        bypass_circuit_breaker: { type: 'boolean' },
       },
       required: ['entry_id', 'key', 'value'],
     },
@@ -204,10 +206,13 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'replace_status',
-    description: 'Replace the entire status document (OCC required)',
+    description: 'Replace the entire status document (OCC required). bypass_circuit_breaker: opt-out of the general write throttle for this call; honored only for create-sub-entries / maintenance claims, silently ignored otherwise.',
     inputSchema: {
       type: 'object' as const,
-      properties: { entry_id: { type: 'string' }, content: { type: 'string' }, version_id: { type: 'string' } },
+      properties: {
+        entry_id: { type: 'string' }, content: { type: 'string' }, version_id: { type: 'string' },
+        bypass_circuit_breaker: { type: 'boolean' },
+      },
       required: ['entry_id', 'content', 'version_id'],
     },
   },
@@ -283,7 +288,7 @@ export async function main(): Promise<void> {
 
   // 4. Create MCP Server instance
   const server = new Server(
-    { name: 'aletheia', version: '0.2.8' },
+    { name: 'aletheia', version: '0.2.9' },
     { capabilities: { tools: {} } },
   );
 
