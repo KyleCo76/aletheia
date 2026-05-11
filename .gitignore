@@ -21,13 +21,15 @@ target/
 **/target/
 
 # Internal planning and review docs (not for public repo)
-aletheia-code-review.md
-aletheia-coverage-check.md
-aletheia-*-journal.md
-aletheia-review.md
-aletheia-plan.md
-2026-04-08-aletheia-design.md
-pm-instructions.md
-review-findings.md
-CLAUDE.md
+# Root-anchored so the V1 design corpus relocated to docs/plans/designs/v1/
+# (and the V2 design corpus at docs/plans/designs/) remains trackable.
+/aletheia-code-review.md
+/aletheia-coverage-check.md
+/aletheia-*-journal.md
+/aletheia-review.md
+/aletheia-plan.md
+/2026-04-08-aletheia-design.md
+/pm-instructions.md
+/review-findings.md
+/CLAUDE.md
 *.pre-aletheia

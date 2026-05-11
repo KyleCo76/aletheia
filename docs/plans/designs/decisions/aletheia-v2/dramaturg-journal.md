@@ -2,7 +2,7 @@
 
 **Topic:** `aletheia-v2` — evolution of Aletheia V1 with targeted deltas (L1/L2 relevance filtering, SDK-based digest, scope-leak fix, reclaim-on-resume, mass-ingest mode, knowledge graph, version migration, first-upgrade KG bootstrap).
 **Design doc target:** `kyle-projects/aletheia/docs/plans/designs/2026-04-17-aletheia-v2-design.md`
-**V1 reference journal:** `kyle-projects/aletheia/aletheia-dramaturg-journal.md` — canonical for V1 architecture decisions that V2 inherits and does not re-litigate.
+**V1 reference journal:** `kyle-projects/aletheia/docs/plans/designs/v1/aletheia-dramaturg-journal.md` — canonical for V1 architecture decisions that V2 inherits and does not re-litigate.
 **Session mode:** Interactive solo CC session (not comms-link — `~/.ElevatedStage/dramaturg.txt` flag ignored per spawn prompt).
 
 ---

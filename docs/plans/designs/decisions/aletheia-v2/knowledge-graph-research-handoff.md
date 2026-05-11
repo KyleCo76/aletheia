@@ -14,8 +14,8 @@ This document captures what Stages 1–3 surfaced about KG architectures so the 
 
 - Dramaturg journal (V2): `kyle-projects/aletheia/docs/plans/designs/decisions/aletheia-v2/dramaturg-journal.md`
 - V2 design doc (on completion): `kyle-projects/aletheia/docs/plans/designs/2026-04-17-aletheia-v2-design.md`
-- V1 reference design: `kyle-projects/aletheia/2026-04-08-aletheia-design.md`
-- V1 reference journal: `kyle-projects/aletheia/aletheia-dramaturg-journal.md`
+- V1 reference design: `kyle-projects/aletheia/docs/plans/designs/v1/2026-04-08-aletheia-design.md`
+- V1 reference journal: `kyle-projects/aletheia/docs/plans/designs/v1/aletheia-dramaturg-journal.md`
 - Staged brainstorming technique doc: `kyle-projects/skills-work/elevated-stage/dramaturg/docs/working/2026-04-17-staged-brainstorming-technique.md`
 
 ## Inventory of KG-Relevant Systems (from Stage 1)

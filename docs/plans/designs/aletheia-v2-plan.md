@@ -123,7 +123,7 @@ V2 is an internal/development release that WILL be implemented and deployed. V3 
 
 **Source of decision rationale:** `docs/plans/designs/decisions/aletheia-v2/arranger-journal.md` (Phases 1-4 of Arranger work). For implementation insights and CC ecosystem realities discovered during Phase 2 audit, see `docs/plans/designs/decisions/aletheia-v2/arranger-handoff.md` (V2 implementation handoff for V3 sessions).
 
-**V1 reference:** Source code at `/home/claude/kyle-projects/aletheia/src/` (TypeScript). V1 design at `/home/claude/kyle-projects/aletheia/2026-04-08-aletheia-design.md`. V1 ships v0.2.8 via npm. V2 is a greenfield rewrite — Phase 8 implements `migrate_from_v1` to read V1's SQLite database as data only (no V1 code reuse).
+**V1 reference:** Source code at `/home/claude/Projects/kyle-projects/aletheia/src/` (TypeScript). V1 design at `/home/claude/Projects/kyle-projects/aletheia/docs/plans/designs/v1/2026-04-08-aletheia-design.md`. V1 ships v0.2.8 via npm. V2 is a greenfield rewrite — Phase 8 implements `migrate_from_v1` to read V1's SQLite database as data only (no V1 code reuse).
 
 **Tech stack lock-ins:** Rust 2024 edition (or stable at build time), `rmcp` 1.5.x (Anthropic official Rust MCP SDK), `rusqlite` with `bundled` feature, `interprocess` v2.x for cross-platform Unix sockets / Windows named pipes, `tokio` async runtime, `cargo-dist` for npm distribution, `serde` + `schemars` for tool registration, `toml` crate for settings parsing, `sha2` for content hashing, `uuid` for entry/scope IDs.
 </context>

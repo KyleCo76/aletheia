@@ -383,7 +383,7 @@ V3 Dramaturg session has the advantage of empirical V2 production data. Use it.
 - V2 dramaturg journal: `dramaturg-journal.md`
 - V3 KG handoff: `knowledge-graph-research-handoff.md`
 - CEO review feedback: `ceo-review-feedback.md`
-- V1 design (predecessor): `../../../2026-04-08-aletheia-design.md`
+- V1 design (predecessor): `../../v1/2026-04-08-aletheia-design.md`
 - Hermes spike-fail (precedent for `.claude/` protection): `/home/claude/claude-projects/hermes/docs/permission-hook-spike-fail.md`
 
 **Maintainer:** Future Aletheia sessions. Updates welcome from V2 implementation experience and V3 sessions as findings evolve.
