@@ -1,0 +1,21 @@
+# Cargo workspace-level environment configuration for aletheia-v2.
+#
+# Sets LIBSQLITE3_FLAGS so the bundled libsqlite3-sys build pushes
+# -DSQLITE_MAX_ATTACHED=125 into the C compiler when compiling the
+# vendored SQLite amalgamation. This lifts SQLite's ATTACH DATABASE
+# ceiling from the default 10 to 125, supporting Aletheia V2's
+# per-scope DB partitioning architecture (design Q5).
+#
+# Phase 1's crates/aletheia-v2/build.rs emits
+# `cargo:rustc-env=SQLITE_MAX_ATTACHED=125`, which is a Rust-side env
+# var only (visible via env!("SQLITE_MAX_ATTACHED")). That mechanism
+# does NOT affect the C build of bundled SQLite. The [env] section
+# below is what actually pushes the -D define into the C compile.
+# See aletheia-v2/.tl-handoff/2026-05-03-tl-foundation-shutdown-handoff.md
+# §4 caveat #3 for the mechanism analysis.
+#
+# CR-2 verifies this via `attach_lifts_above_default_10` test in
+# crates/aletheia-v2/src/db/connection.rs.
+
+[env]
+LIBSQLITE3_FLAGS = "-DSQLITE_MAX_ATTACHED=125"
