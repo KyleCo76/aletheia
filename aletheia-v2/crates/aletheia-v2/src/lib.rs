@@ -4,9 +4,12 @@
 //! settings module. Subsequent phases attach storage (Phase 2), auth
 //! (Phase 3), MCP server (Phase 4), and onward.
 
+pub mod auth;
 pub mod db;
 pub mod error;
+pub mod server;
 pub mod settings;
+pub mod shadow;
 pub mod types;
 pub mod version;
 

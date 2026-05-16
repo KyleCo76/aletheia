@@ -9,7 +9,22 @@ license = "MIT"
 authors = ["Kyle Corbeille"]
 
 [workspace.dependencies]
-rmcp = "1.5"
+# rmcp PINNED at exact patch (Phase 4 S1 contract C-S1): the macro API changed
+# materially between rmcp 1.4 and 1.5 (#785 in CHANGELOG.md: tool_router /
+# tool_handler split + auto-generated get_info). The plan's snippet at
+# lines 2113-2170 (written against an earlier patch / `#[tool(tool_box)]`)
+# does not compile against this version. The Phase 4 S1 implementation
+# adapts per plan guidance lines 2364-2365. Verify exact-patch pin via
+# `grep '^rmcp' Cargo.toml | grep '= "= '`.
+rmcp = { version = "= 1.5.0", default-features = false, features = [
+    "transport-io",
+    "server",
+    "macros",
+    "schemars",
+] }
+# `client` is pulled in as a dev-dependency feature in the aletheia-v2
+# crate so the in-process 2-tool spike test (C-S2) can drive the server
+# via rmcp's own client API. Production builds do NOT enable `client`.
 # Note (Worker A1): the plan (line 198) listed feature `json` but
 # rusqlite 0.32.x exposes the JSON1 helper crate via the `serde_json`
 # feature instead — there is no `json` feature on this release.
@@ -32,3 +47,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # Added by Worker A1 (not in plan deps list, but referenced elsewhere in plan):
 hostname = "0.4"                                    # used by audit_log::emit_event (Phase 2; plan line ~1158)
 clap = { version = "4", features = ["derive"] }     # used by main.rs CLI (plan line 519)
+# Added by Worker W0.5 (Phase 3 scaffold prerequisites for Wave A workers):
+rand = "0.8"                                        # used by auth::keys::generate_key (Phase 3 W1; 32-byte random key minting)
+hex = "0.4"                                         # used by auth::keys::{generate_key, hash_key} (Phase 3 W1; hex encoding + SHA-256 digests)
+nix = { version = "0.27", features = ["process", "signal"] }  # used by auth::sessions::{discover_session_id_via_ppid, pid_alive} (Phase 3 W2; getppid + kill probe, #[cfg(unix)] at use sites)

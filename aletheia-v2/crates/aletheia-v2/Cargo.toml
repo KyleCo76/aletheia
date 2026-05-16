@@ -31,3 +31,20 @@ tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
 hostname = { workspace = true }
 clap = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+nix = { workspace = true }
+
+# Dev-only: re-import rmcp with the `client` feature ENABLED for the
+# 2-tool spike integration test (Phase 4 S1 contract C-S2). Production
+# builds do not link rmcp's client side. Pin matches the workspace pin
+# exactly; cargo unifies features so only one rmcp crate is compiled,
+# but with `client` ON when building tests.
+[dev-dependencies]
+rmcp = { version = "= 1.5.0", default-features = false, features = [
+    "transport-io",
+    "server",
+    "client",
+    "macros",
+    "schemars",
+] }
